@@ -1,3 +1,10 @@
+"""
+Retrieve data from the ALMA archive and look for salt
+
+The archive retrieval is only half-completed; some hacking is needed.
+
+The archival image cubes only cover a small fraction of the bandwidth observed.
+"""
 import numpy as np
 import scipy.ndimage
 from astroquery.alma import Alma
@@ -18,6 +25,8 @@ if not os.path.exists('member.uid___A001_X12a_X19.A2591_line_spw1.image.pbcor.fi
 
 cube = SpectralCube.read('member.uid___A001_X12a_X19.A2591_line_spw1.image.pbcor.fits')
 
+# many from https://www.aanda.org/articles/aa/pdf/2019/11/aa35865-19.pdf
+# but the ?'s were *not detected* in that article!  What the hell? (beam was 1.5")
 known_lines = {'13CS': 231.220996*u.GHz,
                'CH3OH1029': 231.28115*u.GHz,
                'CH3CO?': 231.3104984*u.GHz,

@@ -11,23 +11,23 @@ if not os.path.exists('candidates'):
 for row in result:
     if row['Has salt']:
 
-        sourcename = row['Source name']
+        sourcename = row['Source name'] if 'Source name' in row.colnames else row['target_name']
 
-        mous = row['Member ous id']
+        mous = row['Member ous id'] if 'Member ous id' in row.colnames else row['member_ous_uid']
         reg_mous = mous.replace(":","_").replace("/","_")
         if os.path.exists(reg_mous):
             continue
 
-        stage = Alma().stage_data(mous)
+        stage = Alma().get_data_info(mous, expand_tarfiles=True)
 
-        tarfiles = [x for x in stage['URL'] if '001_of_001.tar' in x]
-        fitsfiles = [x for x in stage['URL'] if 'cube.I.pbcor.fits' in x]
+        tarfiles = [x for x in stage['access_url'] if '001_of_001.tar' in x]
+        fitsfiles = [x for x in stage['access_url'] if 'cube.I.pbcor.fits' in x]
 
         almadl = Alma()
         almadl.cache_location = '.'
 
         if len(fitsfiles) > 0:
-            localfiles = almadl.download_and_extract_files(fitsfiles)
+            localfiles = almadl.download_files(fitsfiles)
         else:
             print("SKIP")
             print(fitsfiles, tarfiles)

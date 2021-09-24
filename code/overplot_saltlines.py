@@ -7,9 +7,12 @@ import pyspeckit
 import pylab as pl
 from astroquery.splatalogue.utils import minimize_table as mt
 import sys
+
+
 sys.path.append('/orange/adamginsburg/salt/Orion_ALMA_2016.1.00165.S/analysis')
 import lines
 import paths
+
 from salt_tables import (salt_tables, salt_table_names, SO, SO2, HCl, sis_tables, AlCl, AlF, Al37Cl,
                          NaF, AlO, AlOH, NaCN, CaS, CaO)
 
@@ -96,3 +99,27 @@ def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.'):
         sp_st.plotter.savefig(fpath('color_labels_{0}'
                                           .format(basefn.replace("fits","png")))
                               )
+
+if __name__ == '__main__':
+    basepath = '/orange/adamginsburg/salt/'
+    from archive_metadata import field_meta
+
+    import glob
+
+    for field, field_data in field_meta.items():
+        files = field_data['files']
+        regions = regions.Regions.read(f'{basepath}/archive/regions/{field_data["regions"]}')
+        for fn in files:
+            cube = SpectralCube.read(f'{basepath}/archive/{fn}')
+
+            for reg in regions:
+                name = reg.meta['text']
+                basename = os.path.basename(fn)
+
+                sp = pyspeckit.Spectrum(f'{basepath}/archive/{field}/spectra/Source{name}_{basename}')
+                sp.specname = 'Source{name}_{basename}'
+
+                if not os.path.exists(f'{basepath}/archive/{field}/spectra/figures'):
+                    os.mkdir(f'{basepath}/archive/{field}/spectra/figures')
+
+                overplot_saltlines([sp], vcen=field_data['velocity'][name], savepath=f'{basepath}/archive/{field}/spectra/figures')

@@ -1,4 +1,6 @@
+from spectral_cube import SpectralCube
 import numpy as np
+import regions
 import os
 import glob
 from astropy import constants, units as u, table, stats, coordinates, wcs, log, coordinates as coord
@@ -110,16 +112,17 @@ if __name__ == '__main__':
         files = field_data['files']
         regions = regions.Regions.read(f'{basepath}/archive/regions/{field_data["regions"]}')
         for fn in files:
-            cube = SpectralCube.read(f'{basepath}/archive/{fn}')
+            #cube = SpectralCube.read(f'{basepath}/archive/{fn}')
 
             for reg in regions:
                 name = reg.meta['text']
                 basename = os.path.basename(fn)
 
                 sp = pyspeckit.Spectrum(f'{basepath}/archive/{field}/spectra/Source{name}_{basename}')
-                sp.specname = 'Source{name}_{basename}'
+                sp.specname = f'Source{name}_{basename}'
 
                 if not os.path.exists(f'{basepath}/archive/{field}/spectra/figures'):
                     os.mkdir(f'{basepath}/archive/{field}/spectra/figures')
 
-                overplot_saltlines([sp], vcen=field_data['velocity'][name], savepath=f'{basepath}/archive/{field}/spectra/figures')
+                overplot_saltlines([sp], vcen=u.Quantity(field_data['velocity'][name], u.km/u.s),
+                                   savepath=f'{basepath}/archive/{field}/spectra/figures')

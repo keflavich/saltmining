@@ -1,3 +1,4 @@
+print("Running pipeline")
 continuum = True
 
 finalvis='calibrated_final.ms'
@@ -62,14 +63,14 @@ tclean(vis=contvis,
        field='S255IR-SMA1',
        gridder='standard',
        cell='0.0042arcsec',
-       imsize = [2000,2000], # size of image in pixels.
+       #imsize = [2000,2000], # size of image in pixels.
        imsize = [16000,16000],
        outframe='lsrk', # velocity reference frame.
        veltype='radio', # velocity type.
        weighting = 'briggs',
        robust=0.0,
        niter=10000000,
-       threshold = '0.075mJy'
+       threshold = '0.075mJy',
        interactive = False,
        pbcor = True)
 
@@ -117,8 +118,6 @@ for spw in '0123':
            perchanweightdensity=True,
            outframe=outframe,
            veltype=veltype,
-           niter=niter,
-           threshold=threshold,
            interactive=False,
            cell=cell,
            niter=1000000,

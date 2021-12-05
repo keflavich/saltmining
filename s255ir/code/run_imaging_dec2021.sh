@@ -21,6 +21,9 @@ export LOGFILENAME="casa_log_s255ir_${FIELD_ID}_${BAND_TO_IMAGE}_12M_$(date +%Y-
 WORK_DIR='/orange/adamginsburg/salt/s255ir/imaging'
 SCRIPT_DIR='/orange/adamginsburg/salt/s255ir/code'
 
+# "copy" the MS
+ln -s /orange/adamginsburg/salt/s255ir/2019.1.00492.S/science_goal.uid___A001_X1465_X2dfc/group.uid___A001_X1465_X2dfd/member.uid___A001_X1465_X2dfe/calibrated/calibrated_final.ms ${WORK_DIR}/
+
 if [[ ! $CASAVERSION ]]; then
     CASAVERSION=casa-6.4.3-4
     echo "Set CASA version to default ${CASAVERSION}"
@@ -65,11 +68,13 @@ pwd
 
 OMPI_COMM_WORLD_SIZE=$SLURM_NTASKS
 
-echo Running command: ${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/line_imaging.py')" &
+echo Running command: ${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
 
-${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/line_imaging.py')" &
+${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
 ppid="$!"; childPID="$(ps -C ${CASA} -o ppid=,pid= | awk -v ppid="$ppid" '$1==ppid {print $2}')"
 echo PID=${ppid} childPID=${childPID}
+
+ps -C ${CASA} -o ppid=,pid= | awk -v ppid="$ppid" '$1==ppid {print $2}'
 
 if [[ ! -z $childPID ]]; then 
     /orange/adamginsburg/miniconda3/bin/python ${ALMAIMF_ROOTDIR}/slurm_scripts/monitor_memory.py ${childPID}

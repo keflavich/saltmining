@@ -20,7 +20,7 @@ export LOGFILENAME="casa_log_s255ir_${FIELD_ID}_${BAND_TO_IMAGE}_12M_$(date +%Y-
 
 WORK_DIR='/orange/adamginsburg/salt/s255ir/imaging'
 SCRIPT_DIR='/orange/adamginsburg/salt/s255ir/code'
-WORK_DIR='/blue/adamginsburg/adamginsburg/salt/'
+WORK_DIR='/blue/adamginsburg/adamginsburg/salt/imaging/'
 
 # "copy" the MS (on orange)
 # ln -s /orange/adamginsburg/salt/s255ir/2019.1.00492.S/science_goal.uid___A001_X1465_X2dfc/group.uid___A001_X1465_X2dfd/member.uid___A001_X1465_X2dfe/calibrated/calibrated_final.ms ${WORK_DIR}/

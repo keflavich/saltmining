@@ -58,7 +58,8 @@ if continuum:
     print("Continuum cleaning")
     tclean(vis=contvis,
            imagename=contimagename,
-           specmode='mtmfs',
+           specmode='mfs',
+           deconvolver='mtmfs',
            nterms=2,
            deconvolver='hogbom',
            field='S255IR-SMA1',

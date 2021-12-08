@@ -2,7 +2,7 @@ import os, glob, re
 
 print("Running imaging")
 if "continuum" not in locals():
-    continuum = True
+    continuum = False
 if "line" not in locals():
     line = True
 
@@ -72,13 +72,13 @@ if continuum:
         gridder="standard",
         cell="0.0042arcsec",
         # imsize = [2000,2000], # size of image in pixels.
-        imsize=[16000, 16000],
+        imsize=[9600, 9600],
         outframe="lsrk",  # velocity reference frame.
         veltype="radio",  # velocity type.
         weighting="briggs",
         robust=0.0,
-        niter=10000000,
-        threshold="0.075mJy",
+        niter=100000,
+        threshold="0.1mJy",
         interactive=False,
         pbcor=True,
     )
@@ -98,12 +98,16 @@ if line:
         "31:0~6;11~15;21~34;36~37;39~43;45~45;48~48;50~52;56~59;63~72;78~79;85~101;107~129;133~147;149~149;151~157;166~171;173~177;182~183;187~190;194~227;229~244;249~252;254~289;291~305;311~346;351~400;404~409;414~439;446~451;455~466;468~470;472~472;474~507;509~523;525~539;543~550;552~560;563~564;570~627;630~660;662~663;665~681;683~692;695~706;720~723;732~744;754~759;762~765;767~774;784~793;796~797;800~815;824~826;829~839;841~856;871~871;882~887;889~921;926~926;928~965;969~985;990~998;1002~1018;1020~1053;1083~1096;1107~1111;1114~1120;1124~1174;1178~1210;1214~1217;1222~1254;1256~1264;1269~1271;1284~1290;1298~1302;1309~1315;1320~1342;1349~1391;1400~1404;1407~1432;1441~1443;1447~1478;1483~1490;1494~1517;1539~1566;1573~1582;1586~1661;1663~1668;1672~1673;1687~1714;1719~1740;1752~1760;1764~1774;1776~1776;1779~1807;1809~1824;1829~1878;1885~1902;1907~1919"
     )
 
+    # something in this process corrupted the underlying MS several times
+    # the line channels all imaged 100% flagged out
+    # so I think I'll skip uvcontsub?
     finalvis = "calibrated_final.ms"
     linevis = finalvis + ".contsub"  # uncomment if continuum subtracted
+    linevis = finalvis # don't contsub because contsub breaks the data (and who cares anyway?)
 
     linespw = "25,27,29,31"
 
-    if not os.path.exists(linevis):
+    if False and not os.path.exists(linevis):
         uvcontsub(
             vis=finalvis,
             spw=linespw,  # spw to do continuum subtraction on
@@ -118,9 +122,9 @@ if line:
     for spw in "0123":
         orig_spw = 25 + int(spw) * 2
 
-        lineimagename = f"S255IR-SMA1_sci.spw{spw}.cube.I.manual"
+        lineimagename = f"S255IR-SMA1_sci.spw{spw}.cube.I.zoom.manual"
 
-        if not os.path.exists(lineimagename + ".image"):
+        if not os.path.exists(lineimagename + ".image") and not os.path.exists(lineimagename + ".psf") and not os.path.exists(lineimagename + ".pb"):
             tclean(
                 vis=linevis,
                 imagename=lineimagename,
@@ -131,13 +135,42 @@ if line:
                 outframe="lsrk",
                 veltype="radio",  # velocity type.
                 interactive=False,
-                cell=cell,
-                niter=1000000,
+                cell="0.0042arcsec",
+                niter=10000,
                 threshold="10mJy",
-                imsize=imsize,
-                weighting=weighting,
-                robust=robust,
-                gridder=gridder,
+                imsize=[500, 500],
+                weighting="briggs",
+                robust=0.0,
+                gridder="standard",
+                pbcor=True,
+                # restoringbeam='common',
+                parallel=True,
+                usepointing=False,
+            )
+
+    for spw in "0123":
+        orig_spw = 25 + int(spw) * 2
+
+        lineimagename = f"S255IR-SMA1_sci.spw{spw}.cube.I.manual"
+
+        if not os.path.exists(lineimagename + ".image") and not os.path.exists(lineimagename + ".psf") and not os.path.exists(lineimagename + ".pb"):
+            tclean(
+                vis=linevis,
+                imagename=lineimagename,
+                field="S255IR-SMA1",
+                spw=spw,
+                specmode="cube",  # comment this if observing an ephemeris source
+                perchanweightdensity=True,
+                outframe="lsrk",
+                veltype="radio",  # velocity type.
+                interactive=False,
+                cell="0.0042arcsec",
+                niter=10000,
+                threshold="10mJy",
+                imsize=[9600, 9600],
+                weighting="briggs",
+                robust=0.0,
+                gridder="standard",
                 pbcor=True,
                 # restoringbeam='common',
                 parallel=True,

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-type=NONE          # Mail events (NONE, BEGIN, END, FAIL, ALL)
 #SBATCH --mail-user=adamginsburg@ufl.edu     # Where to send mail	
-#SBATCH --ntasks=32
+#SBATCH --ntasks=64
 #SBATCH --mem=256gb # Job memory request PER NODE
 #SBATCH --nodes=1 # exactly 1 node
 #SBATCH --time=96:00:00               # Time limit hrs:min:sec
@@ -12,7 +12,7 @@
 #SBATCH --export=ALL
 
 
-export SLURM_NTASKS=32
+# inherited? export SLURM_NTASKS=64
 
 export FIELD_ID="S255IR-SMA1"
 export BAND_TO_IMAGE=B6
@@ -63,7 +63,7 @@ fi
 #python getversion.py
 #export PYTHONPATH=$ALMAIMF_ROOTDIR
 
-imaging_script=/orange/adamginsburg/salt/s255ir/code/imaging.py
+imaging_script=/orange/adamginsburg/salt/s255ir/code/line_zoom_imaging.py
 
 cd ${WORK_DIR}
 echo ${WORK_DIR}
@@ -89,5 +89,39 @@ wait $ppid
 exitcode=$?
 
 cd -
+
+
+imaging_script=/orange/adamginsburg/salt/s255ir/code/line_full_imaging.py
+
+cd ${WORK_DIR}
+echo ${WORK_DIR}
+pwd
+
+OMPI_COMM_WORLD_SIZE=$SLURM_NTASKS
+
+# try to forcibly limit CASA to use 8 tasks despite 64 available and see if that avoids the memory issue
+echo Running command: ${MPICASA} -n 8 ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
+
+${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
+ppid="$!"; childPID="$(ps -C ${CASA} -o ppid=,pid= | awk -v ppid="$ppid" '$1==ppid {print $2}')"
+echo PID=${ppid} childPID=${childPID}
+
+ps -C ${CASA} -o ppid=,pid= | awk -v ppid="$ppid" '$1==ppid {print $2}'
+
+if [[ ! -z $childPID ]]; then 
+    /orange/adamginsburg/miniconda3/bin/python ${ALMAIMF_ROOTDIR}/slurm_scripts/monitor_memory.py ${childPID}
+else
+    echo "FAILURE: PID=$PID was not set."
+fi
+
+wait $ppid
+exitcode=$?
+
+cd -
+
+
+
+
+
 
 exit $exitcode

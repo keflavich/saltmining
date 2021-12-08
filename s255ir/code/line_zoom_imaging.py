@@ -33,6 +33,7 @@ if False and not os.path.exists(linevis):
 for spw in "0123":
     orig_spw = 25 + int(spw) * 2
 
+    print(f"Imaging SPW={spw} (originally {orig_spw}")
     lineimagename = f"S255IR-SMA1_sci.spw{spw}.cube.I.zoom.manual"
 
     if not os.path.exists(lineimagename + ".image") and not os.path.exists(lineimagename + ".psf") and not os.path.exists(lineimagename + ".pb"):

@@ -71,9 +71,9 @@ pwd
 
 OMPI_COMM_WORLD_SIZE=$SLURM_NTASKS
 
-echo Running command: ${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
+echo Running command: ${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('${imaging_script}')" &
 
-${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
+${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('${imaging_script}')" &
 ppid="$!"; childPID="$(ps -C ${CASA} -o ppid=,pid= | awk -v ppid="$ppid" '$1==ppid {print $2}')"
 echo PID=${ppid} childPID=${childPID}
 
@@ -100,9 +100,9 @@ pwd
 OMPI_COMM_WORLD_SIZE=$SLURM_NTASKS
 
 # try to forcibly limit CASA to use 8 tasks despite 64 available and see if that avoids the memory issue
-echo Running command: ${MPICASA} -n 8 ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
+echo Running command: ${MPICASA} -n 8 ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('${imaging_script}')" &
 
-${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('$SCRIPT_DIR/imaging.py')" &
+${MPICASA} -n ${SLURM_NTASKS} ${CASA} --nogui --nologger --logfile=${LOGFILENAME} -c "execfile('${imaging_script}')" &
 ppid="$!"; childPID="$(ps -C ${CASA} -o ppid=,pid= | awk -v ppid="$ppid" '$1==ppid {print $2}')"
 echo PID=${ppid} childPID=${childPID}
 

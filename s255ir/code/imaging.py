@@ -1,3 +1,4 @@
+raise ValueError("Use a different script - zoom, full, or continuum")
 import os, glob, re
 
 print("Running imaging")

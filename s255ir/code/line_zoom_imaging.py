@@ -18,34 +18,38 @@ linevis = finalvis # don't contsub because contsub breaks the data (and who care
 
 linespw = "25,27,29,31"
 
-if False and not os.path.exists(linevis):
-    uvcontsub(
-        vis=finalvis,
-        spw=linespw,  # spw to do continuum subtraction on
-        fitspw=fitspw,  # regions without lines.
-        excludechans=False,  # fit the regions in fitspw
-        # combine='spw', #uncomment if there are no line-free channels in the line spectral window.
-        solint="int",
-        fitorder=1,
-        want_cont=False,
-    )  # This value should not be changed.
+# if False and not os.path.exists(linevis):
+#     uvcontsub(
+#         vis=finalvis,
+#         spw=linespw,  # spw to do continuum subtraction on
+#         fitspw=fitspw,  # regions without lines.
+#         excludechans=False,  # fit the regions in fitspw
+#         # combine='spw', #uncomment if there are no line-free channels in the line spectral window.
+#         solint="int",
+#         fitorder=1,
+#         want_cont=False,
+#     )  # This value should not be changed.
 
 for spw in "0123":
     orig_spw = 25 + int(spw) * 2
 
-    print(f"Imaging SPW={spw} (originally {orig_spw}")
+    print(f"Imaging SPW={spw} (originally {orig_spw})")
     lineimagename = f"S255IR-SMA1_sci.spw{spw}.cube.I.zoom.manual"
 
+
     if not os.path.exists(lineimagename + ".image") and not os.path.exists(lineimagename + ".psf") and not os.path.exists(lineimagename + ".pb"):
+        # FORCE unflag the data. 
+        flagdata(linevis, spw=str(orig_spw), antenna='*&*', mode='unflag')
+
         tclean(
             vis=linevis,
             imagename=lineimagename,
             field="S255IR-SMA1",
             spw=str(orig_spw),
-            specmode="cube",  # comment this if observing an ephemeris source
+            specmode="cube",
             perchanweightdensity=True,
             outframe="lsrk",
-            veltype="radio",  # velocity type.
+            veltype="radio",
             interactive=False,
             cell="0.0042arcsec",
             niter=10000,
@@ -56,6 +60,6 @@ for spw in "0123":
             gridder="standard",
             pbcor=True,
             # restoringbeam='common',
-            parallel=True,
+            parallel=False,
             usepointing=False,
         )

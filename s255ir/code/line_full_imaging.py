@@ -18,17 +18,17 @@ linevis = finalvis # don't contsub because contsub breaks the data (and who care
 
 linespw = "25,27,29,31"
 
-if False and not os.path.exists(linevis):
-    uvcontsub(
-        vis=finalvis,
-        spw=linespw,  # spw to do continuum subtraction on
-        fitspw=fitspw,  # regions without lines.
-        excludechans=False,  # fit the regions in fitspw
-        # combine='spw', #uncomment if there are no line-free channels in the line spectral window.
-        solint="int",
-        fitorder=1,
-        want_cont=False,
-    )  # This value should not be changed.
+# if False and not os.path.exists(linevis):
+#     uvcontsub(
+#         vis=finalvis,
+#         spw=linespw,  # spw to do continuum subtraction on
+#         fitspw=fitspw,  # regions without lines.
+#         excludechans=False,  # fit the regions in fitspw
+#         # combine='spw', #uncomment if there are no line-free channels in the line spectral window.
+#         solint="int",
+#         fitorder=1,
+#         want_cont=False,
+#     )  # This value should not be changed.
 
 
 for spw in "0123":
@@ -38,6 +38,9 @@ for spw in "0123":
     lineimagename = f"S255IR-SMA1_sci.spw{spw}.cube.I.manual"
 
     if not os.path.exists(lineimagename + ".image") and not os.path.exists(lineimagename + ".psf") and not os.path.exists(lineimagename + ".pb"):
+
+        flagdata(linevis, spw=str(orig_spw), antenna='*&*', mode='unflag')
+
         tclean(
             vis=linevis,
             imagename=lineimagename,

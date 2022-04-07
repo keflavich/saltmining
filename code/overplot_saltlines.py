@@ -55,7 +55,8 @@ nondetections = (detection_table['Flag'] == '-n') | (detection_table['Flag'] == 
 detection_table = detection_table[~nondetections]
 
 
-def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.', ymax=None):
+def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.', ymax=None,
+                       linefreqs=linefreqs, linetexnames=linetexnames):
     # (vcen in the stacked centroid is defined to be zero)
 
     fpath = lambda x: f"{savepath}/{x}"

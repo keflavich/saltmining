@@ -18,6 +18,7 @@ from astropy import table
 from astropy import stats
 from astropy import units as u
 from astropy import constants
+from astropy.utils.exceptions import AstropyDeprecationWarning
 
 import pylab as pl
 
@@ -31,7 +32,7 @@ salt_tables = [KCl, K37Cl, K41Cl, NaCl, Na37Cl, K41Cl37]
 salt_tables = [tbl[tbl['vu']<9] for tbl in salt_tables]
 
 dv = 15 * u.km/u.s
-v = 0 * u.km/u.s
+vcen = v = 0 * u.km/u.s
 dv_linesearch = 5.0*u.km/u.s
 
 linefits = {}
@@ -42,11 +43,18 @@ detection_table = Table.read(paths.tpath('salts_in_band.ipac'), format='ascii.ip
 nondetections = (detection_table['Flag'] == '-n') | (detection_table['Flag'] == 'cn')
 detection_table = detection_table[~nondetections]
 
+# use this instead of the Orion-detected ones, which have different spectral coverage
+detection_table = table.vstack([tbl[tbl['vu'] <= 4] for tbl in salt_tables])
+detection_table.rename_column('Freq','Frequency')
+
 if 'doplot' not in locals():
     doplot = False
 
 if doplot:
     pl.figure(0).clf()
+
+# this is some hokey junk about getattr(key, 'lower')
+warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 
 
 for spw in (0,1,2,3):
@@ -54,9 +62,11 @@ for spw in (0,1,2,3):
         fn = f'spectra/G17_SPW{spw}_2017.image_stack.fits'
         sp = pyspeckit.Spectrum(fn)
 
+        sp.data -= np.nanmedian(sp.data)
+
         rms = stats.mad_std(sp.data)
         sp.error[:] = rms
-        print(rms)
+        print(f"spw {spw}: rms={rms}")
 
         beam = radio_beam.Beam.from_fits_header(fits.getheader(fn))
         jtok = beam.jtok(sp.xarr.mean())
@@ -66,23 +76,24 @@ for spw in (0,1,2,3):
         #jtok = u.brightness_temperature(frequency=sp.xarr.mean(),
         #                                beam_area=beam_area)
 
-        if sp.unit is None:
+        if sp.unit in (None, 'undefined'):
             sp.data *= jtok.value
             sp.unit = u.K
-            sp.rms *= jtok.value
+            sp.error *= jtok.value
 
         if doplot:
-            sp.plotter(figure=pl.figure(1), clear=True)
+            sp.plotter(figure=pl.figure(1, figsize=(16,6)), clear=True)
 
+        linenames, linefreqs = [],[]
 
         #for linename, freq in lines.disk_lines.items():
         for row in detection_table:
 
             linename = row['Species']
             freq = u.Quantity(row['Frequency'], u.GHz)
-            detection = row['Flag'][1] == 'd'
-            if not detection:
-                continue
+            #detection = row['Flag'][1] == 'd'
+            #if not detection:
+            #    continue
 
             xmin = freq*(1+(v-dv)/constants.c)
             xmax = freq*(1+(v+dv)/constants.c)
@@ -91,35 +102,43 @@ for spw in (0,1,2,3):
             if len(slc) == 0:
                 continue
 
+            slc.xarr.convert_to_unit(u.km/u.s, refX=freq)
+            assert slc.xarr.min().value < 0
 
+
+            #guesses = [np.max([slc.data.max(), 0.05]),
+            #           (freq*(1+v/constants.c)).to(u.GHz).value,
+            #           (2*u.km/u.s/constants.c*freq).to(u.GHz).value]
             guesses = [np.max([slc.data.max(), 0.05]),
-                       (freq*(1+v/constants.c)).to(u.GHz).value,
-                       (2*u.km/u.s/constants.c*freq).to(u.GHz).value]
+                       0,
+                       2]
             #print(guesses)
 
             if doplot:
                 slc.plotter(figure=pl.figure(0), clear=True)
-                slc.specfit.plot_fit(ax=sp.plotter.ax)
 
 
             slc.specfit(guesses=guesses,
-                        limits=[(0,1),
-                                (xmin.value, xmax.value),
-                                (0, 15)],
+                        limits=[(0,200),
+                                #(xmin.value, xmax.value),
+                                (slc.xarr.min().value, slc.xarr.max().value),
+                                (2, 10)],
                         limited=[(True,True)]*3,
                        )
 
             if doplot:
+                sp.plotter.axis.plot(slc.xarr.as_unit(u.GHz), slc.specfit.model, color='r')
                 slc.plotter.savefig(paths.fpath(
                     f'spectral_fits/{linename}_{spw}_{freq}.png'
                 ))
 
 
             frq = u.Quantity(slc.specfit.parinfo['SHIFT0'], u.GHz)
-            result = Splatalogue.query_lines(freq - (dv_linesearch)/constants.c*freq,
-                                             freq + (dv_linesearch)/constants.c*freq,
-                                             chemical_name=chem_re
-                                            )
+            # redundant; immediately overwritten
+            #result = Splatalogue.query_lines(freq - (dv_linesearch)/constants.c*freq,
+            #                                 freq + (dv_linesearch)/constants.c*freq,
+            #                                 chemical_name=chem_re
+            #                                )
             for tbl in salt_tables:
                 match = ((tbl['Freq'].quantity > freq - (dv_linesearch)/constants.c*freq) &
                          (tbl['Freq'].quantity < freq + (dv_linesearch)/constants.c*freq))
@@ -133,7 +152,7 @@ for spw in (0,1,2,3):
             #    result = mt(result)
             if len(result) >= 1:
                 if len(result) > 1:
-                    print(result)
+                    print(f'{spw} {freq}: result={result}')
                 #eu = u.Quantity(result[0]['E_U (cm^-1)'], u.cm**-1).to(u.eV, u.spectral()).to(u.K, u.temperature_energy()).value
                 eu = u.Quantity(result[0]['E_U'], u.K)
                 species = result[0]['Species']
@@ -171,6 +190,15 @@ for spw in (0,1,2,3):
                 evwidth = ((u.Quantity(slc.specfit.parinfo['WIDTH0'].error,
                                                    u.GHz)) / freq *
                                        constants.c.to(u.km/u.s))
+            try:
+                SNR = slc.specfit.parinfo['AMPLITUDE0'].value / slc.specfit.parinfo['AMPLITUDE0'].error
+            except TypeError:
+                SNR = 0
+            
+            if SNR > 0:
+                linenames.append(linename)
+                linefreqs.append(freq)
+                print(f"Line {linename} with frequency {freq} has SNR={SNR:0.1f}")
 
             linefits[linename] = {'pars': slc.specfit.parinfo,
                                   'vel': vfit,
@@ -186,10 +214,26 @@ for spw in (0,1,2,3):
                                   'jtok': jtok,
                                   'aul': aul,
                                   'deg': deg,
-                                  'flag': row['Flag'],
+                                  'snr': SNR,
+                                  'flag': SNR > 5,
                                  }
         if doplot:
-            sp.plotter.savefig(paths.fpath(f'spectral_fits/{band}_{spw}.png'))
+            sp.plotter.axis.set_ylim(-20, 125)
+            sp.plotter.line_ids(linenames, linefreqs, velocity_offset=vcen,
+                                   label1_size=16,
+                                   auto_yloc_fraction=0.75)
+            for txt in sp.plotter.axis.texts:
+                txt.set_backgroundcolor((1,1,1,0.9))
+            for obj in sp.plotter.axis.texts+sp.plotter.axis.lines:
+                if 'Na' in obj.get_label():
+                    obj.set_color('r')
+                    obj.set_zorder(5)
+                elif 'K' in obj.get_label():
+                    obj.set_color('b')
+                    obj.set_zorder(10)
+            sp.plotter.axis.set_ylim(-20, 125)
+
+            sp.plotter.savefig(paths.fpath(f'spectral_fits/G17_{spw}_fits.png'))
 
 linenames = table.Column(name='Line Name', data=sorted(linefits.keys()))
 freqs = table.Column(name='Frequency', data=u.Quantity([linefits[ln]['freq'] for ln in linenames]))
@@ -197,10 +241,10 @@ velos = table.Column(name='Fitted Velocity', data=u.Quantity([linefits[ln]['vel'
 vwidths = table.Column(name='Fitted Width', data=u.Quantity([linefits[ln]['vwidth'] for ln in linenames], u.km/u.s))
 evelos = table.Column(name='Fitted Velocity error', data=u.Quantity([linefits[ln]['evel'] for ln in linenames], u.km/u.s))
 evwidths = table.Column(name='Fitted Width error', data=u.Quantity([linefits[ln]['evwidth'] for ln in linenames], u.km/u.s))
-ampls = table.Column(name='Fitted Amplitude', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].value*1e3 for ln in linenames], u.mJy))
-amplsK = table.Column(name='Fitted Amplitude K', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].value*linefits[ln]['jtok'].value for ln in linenames], u.K))
-eampls = table.Column(name='Fitted Amplitude error', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].error*1e3 if linefits[ln]['pars']['AMPLITUDE0'].error else np.nan for ln in linenames], u.mJy))
-eamplsK = table.Column(name='Fitted Amplitude error K', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].error*linefits[ln]['jtok'].value if linefits[ln]['pars']['AMPLITUDE0'].error else np.nan for ln in linenames], u.K))
+#ampls = table.Column(name='Fitted Amplitude', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].value*1e3 for ln in linenames], u.mJy))
+amplsK = table.Column(name='Fitted Amplitude K', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].value for ln in linenames], u.K))
+#eampls = table.Column(name='Fitted Amplitude error', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].error*1e3 if linefits[ln]['pars']['AMPLITUDE0'].error else np.nan for ln in linenames], u.mJy))
+eamplsK = table.Column(name='Fitted Amplitude error K', data=u.Quantity([linefits[ln]['pars']['AMPLITUDE0'].error if linefits[ln]['pars']['AMPLITUDE0'].error else np.nan for ln in linenames], u.K))
 integrated = table.Column(name='Integrated Intensity', data=amplsK.quantity*vwidths.quantity*np.sqrt(2*np.pi))
 eintegrated = table.Column(name='Integrated Intensity error', data=((amplsK.quantity**2*evwidths.quantity**2) + (vwidths.quantity**2*eamplsK.quantity**2))**0.5)
 jtok = table.Column(name='Jy/K', data=u.Quantity([linefits[ln]['jtok'].value for ln in linenames], u.Jy/u.K))
@@ -220,9 +264,9 @@ qnju = (Column(name='J$_u$', data=Ju))
 qnjl = (Column(name='J$_l$', data=Jl))
 
 
-tbl1 = table.Table([linenames, species, qn, qnv, qnju, qnjl, freqs, velos, evelos, vwidths, evwidths, ampls, eampls, amplsK, eamplsK, integrated, eintegrated, jtok, eu, deg, Aij, flag, ])
+tbl1 = table.Table([linenames, species, qn, qnv, qnju, qnjl, freqs, velos, evelos, vwidths, evwidths, amplsK, eamplsK, integrated, eintegrated, jtok, eu, deg, Aij, flag, ])
 
-tbl1.write(paths.tpath('fitted_stacked_lines.txt'), format='ascii.fixed_width',
+tbl1.write(paths.tpath('G17_fitted_stacked_lines.txt'), format='ascii.fixed_width',
            overwrite=True)
 
 
@@ -246,8 +290,8 @@ bad_fits = []
 
 badmask = np.array([ln in bad_fits for ln in linenames], dtype='bool')
 badmask |= ((tbl['Fitted Width error'] > tbl['Fitted Width']) |
-            (tbl['Fitted Velocity error'] > 5) |
-            np.array([flg[1] in 'nq' for flg in tbl['Flag']])
+            (tbl['Fitted Velocity error'] > 5) #|
+            #np.array([flg[1] in 'nq' for flg in tbl['Flag']])
            )
 
 
@@ -270,7 +314,7 @@ rename = {'Fitted Width':'Width',
           'Fitted Velocity error':'Velocity error',
           'Fitted Amplitude error K':'Amplitude error',
           'Fitted Amplitude K':'Amplitude',
-          'Integrated Intensity': '$\int T_A dv$',
+          'Integrated Intensity': '$\\int T_A dv$',
           'EU_K': 'E$_U$',
          }
 maskcols = ['Fitted Width',
@@ -320,7 +364,7 @@ def label_by_vstate(tablepath, ncols):
                     fh.write(headerstring)
                     for ll in vstate_lines:
                         fh.write(ll)
-                fh.write("\hline\n")
+                fh.write("\\hline\n")
             elif line.startswith('v &') or (not started_data and line.startswith(r' &')):
                 # this is the header line or unit line
                 fh.write("&".join(line.split("&")[1:]))
@@ -373,14 +417,14 @@ merge_errors(tbl, 'Width', 'Width error')
 merge_errors(tbl, 'Amplitude', 'Amplitude error')
 merge_errors(tbl, 'Velocity', 'Velocity error')
 #merge_errors(tbl, 'Integrated Intensity', 'Integrated Intensity error')
-merge_errors(tbl, '$\int T_A dv$', 'Integrated Intensity error')
+merge_errors(tbl, '$\\int T_A dv$', 'Integrated Intensity error')
 del formats['Velocity']
 del formats['Width']
 del formats['Amplitude']
-del formats['$\int T_A dv$']
+del formats['$\\int T_A dv$']
 
 tbl = tbl['Line Name', 'v', 'J$_u$', 'J$_l$', 'Frequency', 'Velocity',
-          'Amplitude', '$\int T_A dv$', 'E$_U$', ]
+          'Amplitude', '$\\int T_A dv$', 'E$_U$', ]
 
 
 #for salt in ('NaCl', 'Na$^{37}Cl', 'KCl', 'K$^{37}$Cl', '$^{41}$KCl',
@@ -394,10 +438,10 @@ salt_to_barton = {'NaCl': '23Na-35Cl',
 for salt in ('NaCl', 'Na37Cl', 'KCl', 'K37Cl', '41KCl', '41K37Cl'):
     texsalt = salt.replace("37","$^{37}$").replace("41","$^{41}$")
     latexdict = latex_info.latexdict.copy()
-    latexdict['header_start'] = '\label{{tab:{0}_salt_lines}}'.format(salt)
+    latexdict['header_start'] = '\\label{{tab:{0}_salt_lines}}'.format(salt)
     latexdict['caption'] = 'Parameters of {0} lines obtained with Gaussian fits'.format(texsalt)
-    latexdict['preamble'] = '\centering'
-    latexdict['tablefoot'] = ('\n\par '
+    latexdict['preamble'] = '\\centering'
+    latexdict['tablefoot'] = ('\n\\par '
                              )
     tbl.sort('v')
     mask = np.array([ln.startswith(salt_to_barton[salt]) for ln in tbl['Line Name']])
@@ -406,13 +450,13 @@ for salt in ('NaCl', 'Na37Cl', 'KCl', 'K37Cl', '41KCl', '41K37Cl'):
     for row in tbl[mask]:
         assert row['Line Name'].startswith(salt_to_barton[salt])
     columns = tbl.colnames[1:] # drop Line Name
-    tbl[mask][columns].write(paths.texpath('{0}_line_parameters.tex'.format(salt)),
+    tbl[mask][columns].write(paths.texpath('G17_{0}_line_parameters.tex'.format(salt)),
                              formats=formats,
                              latexdict=latexdict,
                              overwrite=True)
     #print(tbl[mask][columns])
     assert len(tbl[mask][columns]) == mask.sum()
-    label_by_vstate(paths.texpath('{0}_line_parameters.tex'.format(salt)),
+    label_by_vstate(paths.texpath('G17_{0}_line_parameters.tex'.format(salt)),
                     ncols=len(columns)
                    )
 
@@ -473,20 +517,21 @@ pl.figure(1).clf()
 kclmask = np.array(['K-35Cl' in row['Species'] for row in tbl1])
 k41clmask = np.array(['41K-35Cl' in row['Species'] for row in tbl1])
 k37clmask = np.array(['K-37Cl' in row['Species'] for row in tbl1])
-pl.plot(tbl1['EU_K'][kclmask], tbl1['Fitted Amplitude'][kclmask], 'o', label='KCl')
-pl.plot(tbl1['EU_K'][k37clmask], tbl1['Fitted Amplitude'][k37clmask], 's', label='K$^{37}$Cl')
-pl.plot(tbl1['EU_K'][k41clmask], tbl1['Fitted Amplitude'][k41clmask], 'd', label='$^{41}$KCl')
+pl.plot(tbl1['EU_K'][kclmask], tbl1['Fitted Amplitude K'][kclmask], 'o', label='KCl')
+pl.plot(tbl1['EU_K'][k37clmask], tbl1['Fitted Amplitude K'][k37clmask], 's', label='K$^{37}$Cl')
+pl.plot(tbl1['EU_K'][k41clmask], tbl1['Fitted Amplitude K'][k41clmask], 'd', label='$^{41}$KCl')
 pl.xlabel("E$_U$ [K]")
-pl.ylabel("Fitted amplitude [mJy]")
+pl.ylabel("Fitted amplitude [K]")
 pl.legend(loc='best')
-pl.savefig(paths.fpath('KCl_amp_vs_eu.pdf'))
+pl.savefig(paths.fpath('G17_KCl_amp_vs_eu.png'))
 
 pl.figure(2).clf()
 naclmask = np.array(['Na-35Cl' in row['Species'] for row in tbl1])
 na37clmask = np.array(['Na-37Cl' in row['Species'] for row in tbl1])
-pl.plot(tbl1['EU_K'][naclmask], tbl1['Fitted Amplitude'][naclmask], 'o', label='NaCl')
-pl.plot(tbl1['EU_K'][na37clmask], tbl1['Fitted Amplitude'][na37clmask], 's', label='Na$^{37}$Cl')
+pl.plot(tbl1['EU_K'][naclmask], tbl1['Fitted Amplitude K'][naclmask], 'o', label='NaCl')
+pl.plot(tbl1['EU_K'][na37clmask], tbl1['Fitted Amplitude K'][na37clmask], 's', label='Na$^{37}$Cl')
 pl.xlabel("E$_U$ [K]")
-pl.ylabel("Fitted amplitude [mJy]")
+pl.ylabel("Fitted amplitude [K]")
 pl.legend(loc='best')
-pl.savefig(paths.fpath('NaCl_amp_vs_eu.pdf'))
+pl.savefig(paths.fpath('G17_NaCl_amp_vs_eu.pdf'))
+pl.savefig(paths.fpath('G17_NaCl_amp_vs_eu.png'))

@@ -56,6 +56,7 @@ detection_table = detection_table[~nondetections]
 
 
 def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.', ymax=None,
+                       ymin=None,
                        linefreqs=linefreqs, linetexnames=linetexnames):
     # (vcen in the stacked centroid is defined to be zero)
 
@@ -79,7 +80,7 @@ def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.', ymax=None,
             ymax = sp_st.data.max()
             if ymax < 0.004:
                 ymax = 0.004
-        sp_st.plotter(ymax=ymax)
+        sp_st.plotter(ymax=ymax, ymin=ymin)
 
         sp_st.plotter.line_ids(linetexnames[lines_to_plot], linefreqs[lines_to_plot], velocity_offset=vcen,
                                label1_size=16,

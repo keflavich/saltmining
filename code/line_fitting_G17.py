@@ -56,10 +56,10 @@ if doplot:
 # this is some hokey junk about getattr(key, 'lower')
 warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 
+flist = {spw: f'spectra/G17_SPW{spw}_2017.image_stack.fits' for spw in (0,1,2,3)}
+flist['B7spw25'] = 'spectra/member.uid___A001_X1528_X2a2.AFGL_2136_IRS_1_sci.spw25.cube.I.pbcor_stack.fits'
 
-for spw in (0,1,2,3):
-    #for band in ('B3', 'B6', 'B7.lb'):
-        fn = f'spectra/G17_SPW{spw}_2017.image_stack.fits'
+for spw,fn in flist.items():
         sp = pyspeckit.Spectrum(fn)
 
         sp.data -= np.nanmedian(sp.data)
@@ -76,7 +76,7 @@ for spw in (0,1,2,3):
         #jtok = u.brightness_temperature(frequency=sp.xarr.mean(),
         #                                beam_area=beam_area)
 
-        if sp.unit in (None, 'undefined'):
+        if sp.unit in (None, 'undefined', (u.Jy/u.beam)):
             sp.data *= jtok.value
             sp.unit = u.K
             sp.error *= jtok.value

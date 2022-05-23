@@ -67,7 +67,7 @@ def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.', ymax=None,
 
         sp_st.xarr.convert_to_unit(u.GHz)
 
-        basefn = os.path.basename(sp_st.specname)
+        basefn = os.path.basename(sp_st.specname).replace(" ","_")
         print(basefn)
 
         pl.figure(0, figsize=(16,6)).clf()

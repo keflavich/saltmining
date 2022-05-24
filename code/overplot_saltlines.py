@@ -42,10 +42,10 @@ def linename(row):
 def freq(row):
     return u.Quantity(row['Freq'], u.GHz)
 
-linenames = [linename(row) for tbl in tables for row in tbl if row['vu'] <=4]
-linetexnames = [linename(row) for tbl in tables for row in tbl if row['vu'] <=4] + ided_linetexnames
+linenames = [linename(row) for tbl in tables for row in tbl if row['vu'] <=2]
+linetexnames = [linename(row) for tbl in tables for row in tbl if row['vu'] <=2] + ided_linetexnames
 linetexnames = np.array(linetexnames)
-linefreqs = np.hstack([u.Quantity([freq(row) for tbl in tables for row in tbl if row['vu'] <=4], u.GHz).value,
+linefreqs = np.hstack([u.Quantity([freq(row) for tbl in tables for row in tbl if row['vu'] <=2], u.GHz).value,
                        ided_linefreqs.value])
 linefreqs = u.Quantity(linefreqs, u.GHz)
 

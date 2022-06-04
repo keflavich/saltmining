@@ -103,7 +103,7 @@ import pylab as pl
 from astroquery.splatalogue import Splatalogue
 from astroquery.splatalogue.utils import minimize_table as mt
 import sys
-sys.path.append('../../orion/analysis')
+sys.path.append('../../orion/alma_lb/analysis')
 import lines
 from salt_tables import (salt_tables, salt_table_names, SO, SO2, HCl, sis_tables, AlCl, AlF, Al37Cl,
                          NaF, AlO, AlOH, NaCN, CaS, CaO)

@@ -1,0 +1,10 @@
+*.fits
+*.png
+ipython*py
+*pdf
+*zip
+*log
+package-lock.json
+package.json
+*bck
+*bck2

@@ -1,0 +1,22 @@
+# Region file format: DS9 CARTA 3.0.0-beta.3
+global color=green dashlist=8 3 width=1 font="helvetica 10 normal roman" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1
+icrs
+box(260.229943990, -35.751000697, 0.1707", 0.1562", 0) # color=#2EE6D6 width=2 text={IN-SMA1b-N}
+box(260.227480000, -35.754823000, 0.5416", 0.5416", 0) # color=#2EE6D6 width=2 text={CBW-mm4-big}
+box(260.227472344, -35.754823879, 0.2110", 0.2424", 52.125015) # color=#2EE6D6 width=2 text={CBW-mm4}
+box(260.230116783, -35.751130030, 0.2332", 0.1908", 0) # color=#2EE6D6 width=2 text={CBW2017mm1}
+box(260.230270393, -35.750799215, 0.2827", 0.2827", 0) # color=#2EE6D6 width=2 text={IN-SMA1c}
+box(260.229698922, -35.751664786, 0.3367", 0.1993", 0) # color=#2EE6D6 width=2 text={91s}
+box(260.229810640, -35.751618975, 0.2336", 0.1993", 0) # color=#2EE6D6 width=2 text={91e}
+box(260.229160324, -35.751932015, 0.1855", 0.1855", 0) # color=#2EE6D6 width=2 text={84}
+box(260.228625821, -35.751782074, 0.2724", 0.2095", 0) # color=#2EE6D6 width=2 text={78}
+box(260.228497941, -35.751677322, 0.2095", 0.1676", 0) # color=#2EE6D6 width=2 text={78b}
+box(260.228628213, -35.751579359, 0.1746", 0.1746", 0) # color=#2EE6D6 width=2 text={78c}
+box(260.227590585, -35.752408986, 0.2724", 0.2305", 0) # color=#2EE6D6 width=2 text={IN-SMA4}
+box(260.231268117, -35.753048820, 0.2673", 0.1828", 0) # color=#2EE6D6 width=2 text={IN-SMA15}
+box(260.231184067, -35.753095986, 0.1441", 0.1349", 0) # color=#2EE6D6 width=2 text={104}
+box(260.229914733, -35.751041705, 0.2807", 0.1787", 0) # color=#2EE6D6 width=2 text={IN-SMA1b}
+box(260.229945306, -35.751093101, 0.4083", 0.2169", 0) # color=#2EE6D6 width=2 text={IN-SMA1-center}
+box(260.230004999, -35.751142135, 0.2042", 0.1701", 0) # color=#2EE6D6 width=2 text={IN-SMA1}
+box(260.229808453, -35.751075971, 0.1957", 0.1446", 0) # color=#2EE6D6 width=2 text={IN-SMA1-W}
+box(260.229365584, -35.750427993, 0.2178", 0.2091", 0) # color=#2EE6D6 width=2 text={87}

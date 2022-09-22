@@ -1,5 +1,6 @@
 import regions
 from spectral_cube import SpectralCube
+import numpy as np
 import os
 from archive_metadata import field_meta
 basepath = '/orange/adamginsburg/salt/'
@@ -21,4 +22,4 @@ for field, field_data in field_meta.items():
             if not os.path.exists(f'{basepath}/archive/{field}/spectra/'):
                 os.mkdir(f'{basepath}/archive/{field}/spectra/')
 
-            spec.write(f'{basepath}/archive/{field}/spectra/Source{name}_{basename}')
+            spec.write(f'{basepath}/archive/{field}/spectra/Source{name}_{basename}', overwrite=True)

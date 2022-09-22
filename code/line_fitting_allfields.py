@@ -1,11 +1,14 @@
 """
 Determine the line parameters for each of the lines
 """
+import os
 import re
+import glob
 import numpy as np
 import pyspeckit
 import lines
 import paths
+import warnings
 
 import radio_beam
 
@@ -75,15 +78,34 @@ region_names = {'I16547': ['I16547', 'IRAS16547'],
                 'G351': ['G351',],
                }
 
-spectra_dirs = glob.glob("sanhueza/*/spectra") + glob.glob("*/spectra")
+# THE FILENAMES ARE NOT UNIQUE ENOUGH
+# I need to go through and rename them for this to be usable at all...
+sourcenames = ['I16547A', 'I16547B', 'GGD27', 'W33A', 'S255IR-SMA1', 'G17',
+               'G351mm1', 'G351mm2', 'G351mm3', 'G11.92mm1', 'G333mm1', 'G333mm2',
+               'G5.89mm15',
+               'NGC6334Imm2b', 'NGC6334Imm1d', 'NGC6334Imm1b',
+               'NGC6334INSMA6', 'NGC6334INSMA1bd',
+               'IRAS16562', 'IRAS18089',
+              ]
+
+spectra_dirs = glob.glob(paths.basepath("sanhueza/*/spectra")) + glob.glob(paths.basepath("*/spectra"))
+
+flist = {}
+for dirname in spectra_dirs:
+    field = os.path.split(dirname)[-2]
+    flist[field] = {}
+    for spw in range(4):
+        filenames = glob.glob(f'*spw{spw}*_stack.fits')
+        for fn in filenames:
+            for sourcename in sourcenames:
+                if sourcename in os.path.basename(fn):
+                    flist[field][sourcename][spw] = fn
 
 
-
-flist = {
-    {spw: f'spectra/G17_SPW{spw}_2017.image_stack.fits' for spw in (0,1,2,3)}
 flist['B7spw25'] = 'spectra/member.uid___A001_X1528_X2a2.AFGL_2136_IRS_1_sci.spw25.cube.I.pbcor_stack.fits'
 
-for spw,fn in flist.items():
+for spw, fn in flist.items():
+    if True: # placeholder for indentation
         sp = pyspeckit.Spectrum(fn)
 
         sp.data -= np.nanmedian(sp.data)

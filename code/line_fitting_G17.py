@@ -194,7 +194,7 @@ for spw,fn in flist.items():
                 SNR = slc.specfit.parinfo['AMPLITUDE0'].value / slc.specfit.parinfo['AMPLITUDE0'].error
             except TypeError:
                 SNR = 0
-            
+
             if SNR > 0:
                 linenames.append(linename)
                 linefreqs.append(freq)

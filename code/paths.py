@@ -11,8 +11,8 @@ elif 'ufhpc' in socket.gethostname():
     root = '/orange/adamginsburg/salt/'
     imagingpath = os.path.join(root, 'imaging/')
 else:
-    root = os.path.expanduser('~/work/orion/alma_lb/')
-    imagingpath = fullcubepath = '/Volumes/external/orion/'
+    root = os.path.expanduser('~/work/salt/saltmining/')
+    imagingpath = fullcubepath = os.path.join(root, 'imaging')
 
 datapath = os.path.join(root, 'FITS/')
 regpath = os.path.join(root, 'regions/')
@@ -25,6 +25,8 @@ saltpath = os.path.join(root, 'salt_data')
 #saltpath = '../salt_data/'
 
 
+def basepath(x, root=root):
+    return os.path.join(root, x)
 
 def dpath(x, datapath=datapath):
     return os.path.join(datapath, x)

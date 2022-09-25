@@ -1,5 +1,5 @@
 # Region file format: DS9 CARTA 2.0.0
 global color=green dashlist=8 3 width=1 font="helvetica 10 normal roman" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1
 icrs
-point(275.609945, -13.503297) # color=#2EE6D6 width=2
-point(275.609931, -13.503363) # color=#2EE6D6 width=2
+point(18:22:26.3885713113, -13:30:11.8837840560) # color=#2EE6D6 width=2
+point(18:22:26.3822027983, -13:30:12.0750773323) # color=#2EE6D6 width=2

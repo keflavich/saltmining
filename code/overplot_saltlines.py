@@ -136,8 +136,14 @@ def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.', ymax=None,
             elif 'K' in obj.get_label():
                 obj.set_color('b')
                 obj.set_zorder(10)
-            elif 'SiS' in obj.get_label():
+            elif 'SiS' in obj.get_label() or 'Si$^{13}$S' in obj.get_label():
                 obj.set_color('orange')
+            elif 'H$_2$O' in obj.get_label():
+                obj.set_color('darkgreen')
+            elif 'PN' in obj.get_label():
+                obj.set_color('purple')
+            elif 'H30' in obj.get_label():
+                obj.set_color('magenta')
         #for txt in sp_st.plotter.axis.texts:
         #    txt.set_backgroundcolor((1,1,1,0.9))
 

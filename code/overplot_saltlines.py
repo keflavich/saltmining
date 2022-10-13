@@ -77,6 +77,19 @@ unique_names, uinds = np.unique(linetexnames, return_index=True)
 linetexnames = linetexnames[uinds]
 linefreqs = linefreqs[uinds]
 
+bad = np.array([x.count('$') % 2 == 1 for x in linetexnames])
+print(f'bad lines: {linetexnames[bad]}  {linefreqs[bad]}')
+linetexnames = linetexnames[~bad]
+linefreqs = linefreqs[~bad]
+
+full_linetexnames = linetexnames
+full_linefreqs = linefreqs
+
+# October 13, 2022:
+# reset to these, which come from all_lines, to ensure internal consistency for table publication
+linetexnames = np.array(ided_linetexnames)
+linefreqs = u.Quantity(ided_linefreqs.value, u.GHz)
+
 #assert 'H30$\\alpha$' in linetexnames
 #assert 231.900928*u.GHz in linefreqs
 #print("H30a freq: ",linefreqs[list(linetexnames).index('H30$\\alpha$')])
@@ -107,7 +120,7 @@ def overplot_saltlines(spectra, vcen = 0*u.km/u.s, savepath='.', ymax=None,
 
         lines_to_plot = ((linefreqs > sp_st.xarr.as_unit(linefreqs.unit).min()*(1-vcen/constants.c)) &
                          (linefreqs < sp_st.xarr.as_unit(linefreqs.unit).max()*(1+vcen/constants.c)))
-        
+
         if ymax is None:
             ymax = sp_st.data.max()
             if ymax < 0.004:

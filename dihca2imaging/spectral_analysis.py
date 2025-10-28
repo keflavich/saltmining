@@ -16,6 +16,7 @@ import glob
 import time
 import shutil
 import numpy as np
+import random
 from astropy.table import Table, Column
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -85,6 +86,7 @@ class SpectralAnalyzer:
             'CH3CN_12-11_3': 220.709017,
             'SO_6(5)-5(4)': 219.949,
             'H2O_550-643': 232.68670,
+            'CH3OH_423-514': 234.68337,
         }
 
     def setup_output_directories(self):
@@ -118,7 +120,8 @@ class SpectralAnalyzer:
 
         # Load the spectral cube
         # empirically, use_dask is a _lot_ faster for these cubes & operations
-        cube = SpectralCube.read(image_file, use_dask=True)
+        # truncate the edge channels ...
+        cube = SpectralCube.read(image_file, use_dask=True)[2:-2]
         print(f"  Cube shape: {cube.shape}")
 
         # Enable large operations
@@ -143,19 +146,38 @@ class SpectralAnalyzer:
         print(f"Computing cube.max(): ", end="", flush=True)
         t0 = time.time()
         mx = cube.max(axis=0)
+        mxmid = np.nanmedian(mx)
         print(f"{time.time()-t0:0.3f} seconds")
-        mask_2sig = mx > (2 * noise_level + np.median(mx))
-        mask_1sig = mx > (1 * noise_level + np.median(mx))
+        mask_2sig = mx > (2 * noise_level + mxmid)
+        mask_1sig = mx > (1 * noise_level + mxmid)
 
-        assert mask_2sig.sum() < mask_1sig.sum()
+        if mask_1sig.sum() == 0:
+            # re-estimate noise
+            print(f"Noise level was too high for 1-sigma at {noise_level}; ", end=" ")
+            noise_level = np.nanstd(mx)
+            print(f"new noise level = {noise_level}")
+            mask_2sig = mx > (2 * noise_level + mxmid)
+            mask_1sig = mx > (1 * noise_level + mxmid)
 
         if mask_2sig.sum() == 0:
-            raise ValueError(f"CRITICAL ERROR: Found no 2σ pixels in the mask")
+            print(f"Noise level was too high for 2-sigma at {noise_level}; ", end=" ")
+            noise_level = np.nanstd(mx)
+            print(f"new noise level = {noise_level}")
+            mask_2sig = mx > (2 * noise_level + mxmid)
+            mask_1sig = mx > (1 * noise_level + mxmid)
+            #raise ValueError(f"CRITICAL ERROR: Found no 2σ pixels in the mask")
+
+        assert mask_2sig.sum() > 0, f"CRITICAL ERROR: Found no 2σ pixels in the mask"
+        assert mask_2sig.sum() < mask_1sig.sum()
 
         dilated_mask = binary_dilation(mask_2sig, mask=mask_1sig, iterations=10)
+        if dilated_mask.sum() == 1:
+            # weird one-off case, at least so far, where there's a single hot pixel that triggered source creation
+            # we can just abandon this "object"
+            return
 
         labeled_mask, num_labels = label(dilated_mask)
-        if num_labels > 1:
+        if num_labels > 0:
             source_pixel = cube.wcs.celestial.world_to_pixel(source_coord)
             label_id = labeled_mask[int(source_pixel[1]), int(source_pixel[0])]
             if label_id == 0:
@@ -626,7 +648,11 @@ class SpectralAnalyzer:
         moments['moment0'] = masked_subcube.moment0()
         moments['moment1'] = masked_subcube.moment1()
         moments['peak_intensity'] = masked_subcube.max(axis=0)
-        moments['velocity_of_peak'] = masked_subcube.argmax_world(axis=0)
+        try:
+            moments['velocity_of_peak'] = masked_subcube.argmax_world(axis=0)
+        except IndexError:
+            # Hack around https://github.com/radio-astro-tools/spectral-cube/issues/982.  Not good, but not expected to be a common case (only affects size-1 slices)
+            moments['velocity_of_peak'] = moments['moment1']
 
         print(f"    Created moments from {masked_subcube.shape[0]} channels in image size {masked_subcube.shape[1:]}.  Time={time.time()-t0:0.3f} seconds")
 
@@ -770,7 +796,11 @@ class SpectralAnalyzer:
 
         masked_moments['masked_moment0'] = masked_subcube.moment0()
         masked_moments['masked_moment1'] = masked_subcube.moment1()
-        masked_moments['velocity_of_peak'] = masked_subcube.argmax_world(axis=0)
+        try:
+            masked_moments['velocity_of_peak'] = masked_subcube.argmax_world(axis=0)
+        except IndexError:
+            # Hack around https://github.com/radio-astro-tools/spectral-cube/issues/982.  Not good, but not expected to be a common case (only affects size-1 slices)
+            masked_moments['velocity_of_peak'] = masked_moments['moment1']
 
         print(f"    Created masked moments with {np.sum(final_mask)} masked pixels in t={time.time()-t0:0.3f} seconds")
 
@@ -806,6 +836,14 @@ class SpectralAnalyzer:
                 print(f"    Peak info: velocity={peak_info.get('velocity', 'N/A')}, "
                       f"frequency={peak_info.get('frequency', 'N/A')}, SNR={peak_info.get('snr', 'N/A')}")
         print(f"    Spectrum from {spectrum.spectral_axis.min()} to {spectrum.spectral_axis.max()}")
+
+        try:
+            root_source_id = "_".join(source_id.split("_")[:-1])
+            continuum_image_name = f'/orange/adamginsburg/salt/dihca/{root_source_id}.quick_cont.pbclean.image.fits'
+            conthdu = fits.open(continuum_image_name)[0]
+            print(f"Found {continuum_image_name}")
+        except Exception as ex:
+            print(ex)
 
         fig = plt.figure(figsize=(15, 12))
         gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.3, wspace=0.3)
@@ -929,10 +967,13 @@ class SpectralAnalyzer:
         if spectrum is not None:
             # SpectralCube spectrum object
             x_axis = spectrum.spectral_axis
-            y_axis = spectrum
-            ax7.plot(x_axis, y_axis, 'k-', alpha=0.7)
-            ax7.set_xlabel('Frequency/Velocity')
-            ax7.set_ylabel('Flux')
+            y_axis = spectrum.quantity # drop the spectral-cube metadata, it cracks something at the mpl level
+            try:
+                ax7.plot(x_axis, y_axis, 'k-', alpha=0.7)
+                ax7.set_xlabel('Frequency/Velocity')
+                ax7.set_ylabel('Flux')
+            except ValueError as ex:
+                print("MAJOR FAILURE that we're skipping: can't plot a simple spectrum")
 
             # Mark the current peak being displayed with emphasis
             if len(peaks_catalog) > 0:
@@ -942,16 +983,16 @@ class SpectralAnalyzer:
                     else:
                         raise ValueError(f"No frequency column in peaks catalog")
                     # Highlight this peak more prominently since it's the one being displayed
-                    ax7.axvline(peak_x, color='red', alpha=0.9, linestyle='-', linewidth=2)
+                    ax7.axvline(peak_x, color='red', alpha=0.9, linestyle='-', linewidth=2, label=peak_x)
 
                     # Build label with SNR and line ID if available
                     label = f"SNR={peak['snr']:.1f}"
                     if 'line_id' in peaks_catalog.colnames and peak['line_id']:
                         line_id = peak['line_id']
                         if line_id != 'unidentified':
-                            label = f"{line_id}\n{label}"
+                            label = f"{line_id} {peak_x}\n{label}"
 
-                    ax7.text(peak_x, peak['intensity'], label,
+                    ax7.text(peak_x, peak['peak_intensity'] if 'peak_intensity' in peak else peak['peak'], label,
                             rotation=90, ha='right', va='bottom', fontsize=10,
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.3))
         else:
@@ -982,7 +1023,7 @@ class SpectralAnalyzer:
         print(f"    Saved diagnostic gallery successfully")
 
 
-    def analyze_source(self, source_row):
+    def analyze_source(self, source_row, image_files=None):
         """
         Analyze a single source following the complete analysis plan
 
@@ -1001,8 +1042,9 @@ class SpectralAnalyzer:
                                dec=source_row['dec_deg']*u.deg,
                                frame='icrs')
 
-        # Find image files for this source field
-        image_files = self.find_image_files(source_field)
+        # Find image files for this source field (or use provided subset)
+        if image_files is None:
+            image_files = self.find_image_files(source_field)
         if not image_files:
             print(f"No image files found for {source_field}")
             return
@@ -1063,7 +1105,7 @@ class SpectralAnalyzer:
                                                {}, gallery_path)
                 continue
             else:
-                if isinstance(source_row['detections'], list):
+                if 'detections' in source_row and isinstance(source_row['detections'], list):
                     source_row['detections'].append(os.path.basename(image_file))
                 else:
                     source_row['detections'] = [os.path.basename(image_file)]
@@ -1291,12 +1333,14 @@ class SpectralAnalyzer:
         print(f"Starting analysis of {len(self.catalog)} sources...")
 
         self.catalog['detections'] = None
-        # ::-1 is just because I've done the first half a billion times now...
-        sources_to_analyze = self.catalog[:max_sources] if max_sources else self.catalog[::-1]
+        sources_to_analyze = self.catalog[:max_sources] if max_sources else self.catalog
+        # shuffle is just because I've done the first half a billion times now...
+        indices = np.arange(len(sources_to_analyze))
+        np.random.shuffle(indices)
 
         print(f"Actually, starting analysis of {len(sources_to_analyze)} sources...")
 
-        for i, source_row in enumerate(sources_to_analyze):
+        for i, source_row in enumerate(sources_to_analyze[indices]):
             print(f"\n{'='*60}")
             print(f"Progress: {i+1}/{len(sources_to_analyze)}")
             print(f"{'='*60}")
@@ -1327,9 +1371,56 @@ def main():
 
     return analyzer
 
+
+def _get_field_from_filename(filename: str) -> str:
+    """Extract the source_field prefix from a filename.
+
+    Expected filename format: <source_field>_group..._spw... .image.fits
+    """
+    base = os.path.basename(filename)
+    if '_group' in base:
+        return base.split('_group', 1)[0]
+    # fallback: take prefix before first underscore
+    return base.split('_', 1)[0]
+
+
+def _normalize_path(p: str) -> str:
+    return os.path.abspath(os.path.expanduser(p))
+
+
+def process_cube_cli(analyzer: SpectralAnalyzer, cube_path: str):
+    """Process a single cube file: find catalog sources in the same field and run analysis only for that cube."""
+    cube_path = _normalize_path(cube_path)
+    if not os.path.exists(cube_path):
+        raise SystemExit(f"Cube file not found: {cube_path}")
+
+    field = _get_field_from_filename(cube_path)
+    print(f"Processing cube {cube_path} for field {field}")
+
+    # Find matching sources in the catalog
+    matches = [row for row in analyzer.catalog if row['source_field'] == field]
+    if not matches:
+        print(f"No catalog sources found for field {field}; nothing to do.")
+        return
+
+    for row in matches:
+        print(f"Running analysis for source {row['source_id']} using cube {os.path.basename(cube_path)}")
+        analyzer.analyze_source(row, image_files=[cube_path])
+
+
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run spectral analysis or process a single cube as a job")
+    parser.add_argument("--process-cube", help="Path to a single image cube to process (one cube per job)")
+    parser.add_argument("--max-sources", type=int, default=None, help="Limit number of sources (when running full analysis)")
+    args = parser.parse_args()
+
     analyzer = main()
 
-    # For testing, analyze just the first few sources
-    print("\nRunning test analysis on first 3 sources...")
-    analyzer.analyze_all_sources(max_sources=3)
+    if args.process_cube:
+        process_cube_cli(analyzer, args.process_cube)
+    else:
+        # For testing, analyze just the first few sources
+        print("\nRunning test analysis on first 3 sources...")
+        analyzer.analyze_all_sources(max_sources=args.max_sources or 3)

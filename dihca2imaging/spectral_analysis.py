@@ -220,7 +220,7 @@ class SpectralAnalyzer:
 
         return spectrum
 
-    def find_spectral_peaks(self, spectrum, noise_level, min_sigma=5.0, wing_threshold=1.0):
+    def find_spectral_peaks(self, spectrum, noise_level, min_sigma=7.0, wing_threshold=1.0):
         """Find spectral peaks - refactored to not do stupid AI loops"""
         print(f"    Finding spectral peaks above {min_sigma}σ")
 
@@ -979,20 +979,20 @@ class SpectralAnalyzer:
             if len(peaks_catalog) > 0:
                 for peak in peaks_catalog:
                     if 'frequency' in peaks_catalog.colnames:
-                        peak_x = peak['frequency']
+                        peak_x = u.Quantity(peak['frequency'], u.Hz).to(u.GHz)
                     else:
                         raise ValueError(f"No frequency column in peaks catalog")
                     # Highlight this peak more prominently since it's the one being displayed
-                    ax7.axvline(peak_x, color='red', alpha=0.9, linestyle='-', linewidth=2, label=peak_x)
+                    ax7.axvline(peak_x.value, color='red', alpha=0.9, linestyle='-', linewidth=2, label=f'{peak_x:0.3f}')
 
                     # Build label with SNR and line ID if available
                     label = f"SNR={peak['snr']:.1f}"
                     if 'line_id' in peaks_catalog.colnames and peak['line_id']:
                         line_id = peak['line_id']
                         if line_id != 'unidentified':
-                            label = f"{line_id} {peak_x}\n{label}"
+                            label = f"{line_id} {peak_x:0.3f}\n{label}"
 
-                    ax7.text(peak_x, peak['peak_intensity'] if 'peak_intensity' in peak else peak['peak'], label,
+                    ax7.text(peak_x.value, peak['peak_intensity'] if 'peak_intensity' in peak else peak['peak'], label,
                             rotation=90, ha='right', va='bottom', fontsize=10,
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.3))
         else:

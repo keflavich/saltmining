@@ -1096,4 +1096,5 @@ Example usage:
 
 
 if __name__ == '__main__':
+    os.chdir('/red/adamginsburg/dihca/shellscripts/')
     main()

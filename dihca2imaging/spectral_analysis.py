@@ -28,6 +28,8 @@ import astropy.units as u
 from astropy import log
 from astroquery.simbad import Simbad
 from spectral_cube import SpectralCube
+from spectral_cube import OneDSpectrum
+from spectral_cube import Projection
 from scipy import ndimage
 from scipy.ndimage import binary_dilation, label, labeled_comprehension
 from scipy.signal import find_peaks
@@ -131,7 +133,7 @@ class SpectralAnalyzer:
 
     def find_image_files(self, source_field):
         """Find all spectral cube files for a given source field"""
-        pattern = os.path.join(self.image_directory, f"{source_field}_group*_spw*.image.fits")
+        pattern = os.path.join(self.image_directory, f"{source_field}_group*_spw*.image.pbcor.fits")
         files = glob.glob(pattern)
         return sorted(files)
 
@@ -800,7 +802,7 @@ class SpectralAnalyzer:
             masked_moments['velocity_of_peak'] = masked_subcube.argmax_world(axis=0)
         except IndexError:
             # Hack around https://github.com/radio-astro-tools/spectral-cube/issues/982.  Not good, but not expected to be a common case (only affects size-1 slices)
-            masked_moments['velocity_of_peak'] = masked_moments['moment1']
+            masked_moments['velocity_of_peak'] = masked_moments['masked_moment1']
 
         print(f"    Created masked moments with {np.sum(final_mask)} masked pixels in t={time.time()-t0:0.3f} seconds")
 
@@ -830,6 +832,7 @@ class SpectralAnalyzer:
             Additional information about this peak (velocity, frequency, SNR, etc.)
         """
         print(f"    Creating diagnostic gallery: {output_path}")
+        t0 = time.time()
         if peak_id:
             print(f"    Peak ID: {peak_id}")
             if peak_info:
@@ -880,13 +883,17 @@ class SpectralAnalyzer:
         ax3 = fig.add_subplot(gs[0, 2])
         if masked_moments and masked_moments.get('masked_moment0') is not None:
             masked_data = masked_moments['masked_moment0'].value if hasattr(masked_moments['masked_moment0'], 'value') else masked_moments['masked_moment0']
-            if np.any(np.isfinite(masked_data)):
-                im3 = ax3.imshow(masked_data, origin='lower', cmap='viridis')
-                plt.colorbar(im3, ax=ax3, shrink=0.8)
-                ax3.set_title('Masked Moment-0')
-            else:
-                ax3.text(0.5, 0.5, 'No finite data', ha='center', va='center', transform=ax3.transAxes)
-                ax3.set_title('Masked Moment-0 (no data)')
+            try:
+                if np.any(np.isfinite(masked_data)):
+                        im3 = ax3.imshow(masked_data, origin='lower', cmap='viridis')
+                        plt.colorbar(im3, ax=ax3, shrink=0.8)
+                        ax3.set_title('Masked Moment-0')
+                else:
+                    ax3.text(0.5, 0.5, 'No finite data', ha='center', va='center', transform=ax3.transAxes)
+                    ax3.set_title('Masked Moment-0 (no data)')
+            except Exception as ex:
+                print("There was some exception I still don't understand that is probably triggered by the isfinite check", ex)
+                print("masked_data: ", masked_data)
         else:
             ax3.text(0.5, 0.5, 'No masked moment-0 data', ha='center', va='center', transform=ax3.transAxes)
             ax3.set_title('Masked Moment-0 (unavailable)')
@@ -922,12 +929,41 @@ class SpectralAnalyzer:
                 ax4.text(0.5, 0.5, 'No finite data', ha='center', va='center', transform=ax4.transAxes)
                 ax4.set_title('Moment-1 (no data)')
         else:
-            ax4.text(0.5, 0.5, 'No moment-1 data', ha='center', va='center', transform=ax4.transAxes)
-            ax4.set_title('Moment-1 (unavailable)')
+            raise ValueError("No moment-1 data available for plotting")
 
         ax5 = fig.add_subplot(gs[1, 1])
-        ax5.text(0.5, 0.5, 'Velocity of Peak', ha='center', va='center', transform=ax5.transAxes)
-        ax5.set_title('Velocity of Peak')
+        if moments and moments.get('velocity_of_peak') is not None:
+            velocity_of_peak_obj = moments['velocity_of_peak']
+            
+            # Convert velocity of peak from frequency to velocity if peak_info is available
+            if peak_info and 'frequency' in peak_info and hasattr(velocity_of_peak_obj, 'unit'):
+                rest_freq = peak_info['frequency']
+                velocity_of_peak_velocity = velocity_of_peak_obj.to(u.km/u.s, u.doppler_radio(rest_freq))
+                
+                velocity_of_peak_display = velocity_of_peak_velocity
+                velocity_of_peak_label = 'Velocity of Peak'
+                velocity_of_peak_unit_label = 'km/s'
+            else:
+                velocity_of_peak_display = velocity_of_peak_obj
+                velocity_of_peak_label = 'Velocity of Peak'
+                velocity_of_peak_unit_label = str(velocity_of_peak_obj.unit) if hasattr(velocity_of_peak_obj, 'unit') else ''
+            
+            # Extract data for display
+            display_data = velocity_of_peak_display.value if hasattr(velocity_of_peak_display, 'value') else velocity_of_peak_display
+            
+            if np.any(np.isfinite(display_data)):
+                im5 = ax5.imshow(display_data, origin='lower', cmap='RdBu_r')
+                cbar5 = plt.colorbar(im5, ax=ax5, shrink=0.8)
+                if velocity_of_peak_unit_label:
+                    cbar5.set_label(velocity_of_peak_unit_label)
+                ax5.set_title(velocity_of_peak_label)
+            else:
+                ax5.text(0.5, 0.5, 'No finite data', ha='center', va='center', transform=ax5.transAxes)
+                ax5.set_title('Velocity of Peak (no data)')
+        else:
+            ax5.text(0.5, 0.5, 'No velocity of peak data', ha='center', va='center', transform=ax5.transAxes)
+            ax5.set_title('Velocity of Peak (unavailable)')
+            raise ValueError("No velocity of peak data available for plotting")
 
         ax6 = fig.add_subplot(gs[1, 2])
         if masked_moments and masked_moments.get('masked_moment1') is not None:
@@ -961,12 +997,13 @@ class SpectralAnalyzer:
         else:
             ax6.text(0.5, 0.5, 'No masked moment-1 data', ha='center', va='center', transform=ax6.transAxes)
             ax6.set_title('Masked Moment-1 (unavailable)')
+            raise ValueError("No masked moment-1 data available for plotting")
 
         # Row 3: spectrum (spans all columns)
         ax7 = fig.add_subplot(gs[2, :])
         if spectrum is not None:
             # SpectralCube spectrum object
-            x_axis = spectrum.spectral_axis
+            x_axis = spectrum.spectral_axis.to(u.GHz)
             y_axis = spectrum.quantity # drop the spectral-cube metadata, it cracks something at the mpl level
             try:
                 ax7.plot(x_axis, y_axis, 'k-', alpha=0.7)
@@ -992,12 +1029,22 @@ class SpectralAnalyzer:
                         if line_id != 'unidentified':
                             label = f"{line_id} {peak_x:0.3f}\n{label}"
 
-                    ax7.text(peak_x.value, peak['peak_intensity'] if 'peak_intensity' in peak else peak['peak'], label,
+                    # Determine y-position for the label (try different column names)
+                    if 'peak_intensity' in peak:
+                        y_pos = peak['peak_intensity']
+                    elif 'peak' in peak:
+                        y_pos = peak['peak']
+                    else:
+                        # If no peak value available, use max of spectrum data
+                        y_pos = np.nanmax(spectrum.value)
+                    
+                    ax7.text(peak_x.value, y_pos, label,
                             rotation=90, ha='right', va='bottom', fontsize=10,
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.3))
         else:
             ax7.text(0.5, 0.5, 'No spectrum data available', ha='center', va='center', transform=ax7.transAxes)
             ax7.set_title('Extracted Spectrum (unavailable)')
+            raise ValueError("No spectrum data available for plotting")
 
         # Create title with peak-specific information
         title = f'Diagnostic Gallery: {source_id}'
@@ -1020,10 +1067,10 @@ class SpectralAnalyzer:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close()
 
-        print(f"    Saved diagnostic gallery successfully")
+        print(f"    Saved diagnostic gallery successfully in t={time.time()-t0:0.2f} seconds")
 
 
-    def analyze_source(self, source_row, image_files=None):
+    def analyze_source(self, source_row, image_files=None, use_cache=True):
         """
         Analyze a single source following the complete analysis plan
 
@@ -1061,17 +1108,19 @@ class SpectralAnalyzer:
         # Process each spectral window
         for image_file in image_files:
             print(f"\n--- Processing {os.path.basename(image_file)} ---")
+            tf0 = time.time()
 
             # Load the spectral cube
             cube = self.load_spectral_cube(image_file)
 
             # CRITICAL: Check if we have any finite data at all
-            spw_name = os.path.basename(image_file).replace('.image.fits', '')
+            spw_name = os.path.basename(image_file).replace('.image.pbcor.fits', '')
             print(f"  Validating cube data quality for {spw_name}...")
             # Use spectral-cube methods properly
             # sample subcube has to be cut out of the middle, as there are edges that are junk but there can't be junk centers
             sample_subcube = cube[cube.shape[0]//2-50:cube.shape[0]//2+50, cube.shape[1]//2-50:cube.shape[1]//2+50, cube.shape[2]//2-50:cube.shape[2]//2+50]
 
+            tvalid = time.time()
             mx = sample_subcube.max()
             if mx == 0*cube.unit or np.isnan(mx):
                 cubemx = cube.max()
@@ -1090,53 +1139,170 @@ class SpectralAnalyzer:
 
             # Calculate noise from actual finite data
             noise_level = sample_subcube.mad_std()
-            print(f"  Noise from finite data: {noise_level}")
+            print(f"  Noise from finite data: {noise_level} [validation + stddev took {time.time()-tvalid:0.2f} seconds]")
 
-            # Step 1: Create source mask
-            mask = self.create_source_mask(cube, source_coord, noise_level)
-            if mask is None:
-                print(f"Source {source_id} is not detected in {os.path.basename(image_file)}")
-                gallery_path = os.path.join(source_output_dir, f"{source_id}_{spw_name}_no_peaks_diagnostics.png")
-                print(f"Computing max spectrum ", end="", flush=True)
-                t0 = time.time()
-                spectrum = cube.max(axis=(1,2))
-                print(f" in t={time.time() - t0:0.1f} seconds")
-                self.create_diagnostic_gallery(source_id, spectrum, {}, {},
-                                               {}, gallery_path)
-                continue
-            else:
-                if 'detections' in source_row and isinstance(source_row['detections'], list):
-                    source_row['detections'].append(os.path.basename(image_file))
+            # load from cache if available
+            spectrum_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_spectrum.fits")
+            peaks_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_consolidated_peaks.fits")
+            
+            # Check if we can actually use the cache - need spectrum, peaks, and at least moment files
+            cache_complete = False
+            if os.path.exists(spectrum_file) and os.path.exists(peaks_file) and use_cache:
+                # Verify that moment files exist for all peaks before using cache
+                temp_consolidated_peaks = Table.read(peaks_file)
+                cache_complete = True
+                for i, peak in enumerate(temp_consolidated_peaks):
+                    peak_id = f"peak_{i+1}"
+                    vel_val = peak['velocity'] if 'velocity' in peak.colnames else 0.0
+                    # Check if at least the essential moment files exist
+                    moment0_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_moment0_v{vel_val:.1f}.fits")
+                    moment1_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_moment1_v{vel_val:.1f}.fits")
+                    if not (os.path.exists(moment0_file) and os.path.exists(moment1_file)):
+                        print(f"  Cache incomplete: missing moment files for {peak_id}")
+                        cache_complete = False
+                        break
+            
+            if cache_complete:
+                print(f"  Loading cached spectrum from {os.path.basename(spectrum_file)}")
+                # Load cached 1D spectrum using spectral_cube's OneDSpectrum
+                spectrum_hdu = fits.open(spectrum_file)[0]
+                spectrum = OneDSpectrum.from_hdu(spectrum_hdu)
+                print(f"  Loaded cached spectrum from {os.path.basename(spectrum_file)}")
+                
+                # Load cached consolidated peaks catalog
+                print(f"  Loading cached peaks from {os.path.basename(peaks_file)}")
+                consolidated_peaks = Table.read(peaks_file)
+                print(f"  Loaded {len(consolidated_peaks)} consolidated peaks from cache")
+                
+                # Also try to load original peaks catalog if available
+                orig_peaks_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_original_peaks.fits")
+                if os.path.exists(orig_peaks_file):
+                    peaks_catalog = Table.read(orig_peaks_file)
+                    print(f"  Loaded {len(peaks_catalog)} original peaks from cache")
                 else:
-                    source_row['detections'] = [os.path.basename(image_file)]
+                    peaks_catalog = Table()  # Empty table if not found
+                
+                # Set velocity_method to "cached" since we're loading from disk
+                # actually we'd rather recover the true velocity method from the cached data...
+                velocity_method = "cached"
+                
+                # Reconstruct all_moments and all_masked_moments from saved FITS files
+                all_moments = {}
+                all_masked_moments = {}
+                
+                for i, peak in enumerate(consolidated_peaks):
+                    peak_id = f"peak_{i+1}"
+                    
+                    # Extract velocity value for filename matching
+                    if 'velocity' in peak.colnames:
+                        vel_val = peak['velocity']
+                    else:
+                        vel_val = 0.0
+                    
+                    # Try to load moment files for this peak
+                    moment0_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_moment0_v{vel_val:.1f}.fits")
+                    moment1_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_moment1_v{vel_val:.1f}.fits")
+                    peak_intensity_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_peak_intensity_v{vel_val:.1f}.fits")
+                    velocity_of_peak_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_velocity_of_peak_v{vel_val:.1f}.fits")
+                    
+                    moments = {}
+                    if os.path.exists(moment0_file):
+                        moments['moment0'] = Projection.from_hdu(fits.open(moment0_file)[0])
+                        print(f"    Loaded cached moment0 for {peak_id}")
+                    if os.path.exists(moment1_file):
+                        moments['moment1'] = Projection.from_hdu(fits.open(moment1_file)[0])
+                        print(f"    Loaded cached moment1 for {peak_id}")
+                    if os.path.exists(peak_intensity_file):
+                        moments['peak_intensity'] = Projection.from_hdu(fits.open(peak_intensity_file)[0])
+                        print(f"    Loaded cached peak_intensity for {peak_id}")
+                    if os.path.exists(velocity_of_peak_file):
+                        moments['velocity_of_peak'] = Projection.from_hdu(fits.open(velocity_of_peak_file)[0])
+                        print(f"    Loaded cached velocity_of_peak for {peak_id}")
+                    
+                    if moments:
+                        all_moments[peak_id] = {
+                            'moments': moments,
+                            'velocity': peak['velocity'] * u.km/u.s if 'velocity' in peak.colnames else 0.0 * u.km/u.s,
+                            'frequency': u.Quantity(peak['frequency'], u.Hz) if 'frequency' in peak.colnames else 0.0 * u.Hz,
+                            'snr': peak['snr'] if 'snr' in peak.colnames else 0.0,
+                            'n_peaks_in_group': peak.get('n_peaks_in_group', 1)
+                        }
+                    
+                    # Try to load masked moment files for this peak
+                    masked_moment0_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_masked_moment0_v{vel_val:.1f}.fits")
+                    masked_moment1_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_masked_moment1_v{vel_val:.1f}.fits")
+                    velocity_of_peak_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_{peak_id}_velocity_of_peak_v{vel_val:.1f}.fits")
+                    
+                    masked_moments = {}
+                    if os.path.exists(masked_moment0_file):
+                        masked_moments['masked_moment0'] = Projection.from_hdu(fits.open(masked_moment0_file)[0])
+                        print(f"    Loaded cached masked_moment0 for {peak_id}")
+                    if os.path.exists(masked_moment1_file):
+                        masked_moments['masked_moment1'] = Projection.from_hdu(fits.open(masked_moment1_file)[0])
+                        print(f"    Loaded cached masked_moment1 for {peak_id}")
+                    if os.path.exists(velocity_of_peak_file):
+                        masked_moments['velocity_of_peak'] = Projection.from_hdu(fits.open(velocity_of_peak_file)[0])
+                        print(f"    Loaded cached velocity_of_peak for {peak_id}")
+                    
+                    if masked_moments:
+                        all_masked_moments[peak_id] = {
+                            'masked_moments': masked_moments,
+                            'velocity': peak['velocity'] * u.km/u.s if 'velocity' in peak.colnames else 0.0 * u.km/u.s,
+                            'frequency': u.Quantity(peak['frequency'], u.Hz) if 'frequency' in peak.colnames else 0.0 * u.Hz,
+                            'snr': peak['snr'] if 'snr' in peak.colnames else 0.0,
+                            'n_peaks_in_group': peak.get('n_peaks_in_group', 1)
+                        }
 
-            # Step 2: Extract spectrum
-            spectrum = self.extract_spectrum(cube, mask)
-            if np.all(np.isnan(spectrum)):
-                raise ValueError(f"CRITICAL ERROR: Extracted spectrum contains only NaN values!\n"
-                               f"  - Spectrum length: {len(spectrum)}\n"
-                               f"  - This indicates the spectral cube data is fundamentally broken")
+            else:
+                # Step 1: Create source mask
+                mask = self.create_source_mask(cube, source_coord, noise_level)
+                if mask is None:
+                    print(f"Source {source_id} is not detected in {os.path.basename(image_file)}")
+                    gallery_path = os.path.join(source_output_dir, f"{source_id}_{spw_name}_no_peaks_diagnostics.png")
+                    print(f"Computing max spectrum ", end="", flush=True)
+                    t0 = time.time()
+                    spectrum = cube.max(axis=(1,2))
+                    print(f" in t={time.time() - t0:0.1f} seconds")
+                    self.create_diagnostic_gallery(source_id, spectrum, {}, {},
+                                                {}, gallery_path)
+                    continue
+                else:
+                    if 'detections' in source_row and isinstance(source_row['detections'], list):
+                        source_row['detections'].append(os.path.basename(image_file))
+                    else:
+                        source_row['detections'] = [os.path.basename(image_file)]
 
-            # Step 3: Find spectral peaks
-            peaks_catalog = self.find_spectral_peaks(spectrum, noise_level)
+                # Step 2: Extract spectrum
+                spectrum = self.extract_spectrum(cube, mask)
+                if np.all(np.isnan(spectrum)):
+                    raise ValueError(f"CRITICAL ERROR: Extracted spectrum contains only NaN values!\n"
+                                f"  - Spectrum length: {len(spectrum)}\n"
+                                f"  - This indicates the spectral cube data is fundamentally broken")
 
-            # Step 3.5: Consolidate nearby peaks within 5 km/s
-            consolidated_peaks = self.consolidate_peaks(peaks_catalog, velocity_threshold=5.0*u.km/u.s)
+                # Step 3: Find spectral peaks
+                peaks_catalog = self.find_spectral_peaks(spectrum, noise_level)
 
-            # Step 4: Determine source velocity (using consolidated peaks)
-            velocity, velocity_method = self.determine_source_velocity(source_coord, consolidated_peaks)
+                # Step 3.5: Consolidate nearby peaks within 5 km/s
+                consolidated_peaks = self.consolidate_peaks(peaks_catalog, velocity_threshold=5.0*u.km/u.s)
 
-            # Step 4.5: Attempt to identify the remaining line peaks
-            consolidated_peaks = self.identify_line_peaks(consolidated_peaks, velocity)
+                # Step 4: Determine source velocity (using consolidated peaks)
+                velocity, velocity_method = self.determine_source_velocity(source_coord, consolidated_peaks)
 
-            # Step 5: Create moment images for each consolidated peak
-            all_moments = self.create_moment_images_for_peaks(cube, mask, consolidated_peaks)
+                # Step 4.5: Attempt to identify the remaining line peaks
+                consolidated_peaks = self.identify_line_peaks(consolidated_peaks, velocity)
 
-            # Step 6: Create masked moment images for each consolidated peak
-            all_masked_moments = self.create_masked_moment_images_for_peaks(cube, mask, consolidated_peaks)
+                # Step 5: Create moment images for each consolidated peak
+                all_moments = self.create_moment_images_for_peaks(cube, mask, consolidated_peaks)
 
-            # Step 7: Create diagnostic galleries - one for each detected peak
+                # Step 6: Create masked moment images for each consolidated peak
+                all_masked_moments = self.create_masked_moment_images_for_peaks(cube, mask, consolidated_peaks)
 
+                # Save spectrum first
+                if hasattr(spectrum, 'write'):
+                    spectrum.write(spectrum_file, overwrite=True)
+                    print(f"    Saved spectrum: {os.path.basename(spectrum_file)}")
+
+            # Create one result row for each peak
             # Get all unique peak_ids from both all_moments and all_masked_moments
             peak_ids = set()
             if all_moments:
@@ -1170,32 +1336,19 @@ class SpectralAnalyzer:
 
                     # Create gallery filename with peak identifier
                     gallery_path = os.path.join(source_output_dir,
-                                              f"{source_id}_{spw_name}_{peak_id}_diagnostics.png")
+                                            f"{source_id}_{spw_name}_{peak_id}_diagnostics.png")
 
                     # Create gallery for this peak with its specific catalog entry
                     self.create_diagnostic_gallery(source_id, spectrum, display_moments,
-                                                 display_masked_moments, peak_catalog_entry,
-                                                 gallery_path, peak_id=peak_id, peak_info=peak_info)
+                                                display_masked_moments, peak_catalog_entry,
+                                                gallery_path, peak_id=peak_id, peak_info=peak_info)
                     print(f"    Created diagnostic gallery for {peak_id}: {os.path.basename(gallery_path)}")
             else:
                 # No peaks found - create a single default gallery
                 gallery_path = os.path.join(source_output_dir, f"{source_id}_{spw_name}_no_peaks_diagnostics.png")
                 self.create_diagnostic_gallery(source_id, spectrum, {}, {},
-                                             consolidated_peaks, gallery_path)
+                                            consolidated_peaks, gallery_path)
 
-            # Save spectrum first
-            spectrum_file = os.path.join(source_output_dir, f"{source_id}_{spw_name}_spectrum.fits")
-            if hasattr(spectrum, 'write'):
-                spectrum.write(spectrum_file, overwrite=True)
-                print(f"    Saved spectrum: {os.path.basename(spectrum_file)}")
-
-            # Create one result row for each peak
-            # Get all unique peak_ids from both all_moments and all_masked_moments
-            peak_ids = set()
-            if all_moments:
-                peak_ids.update(all_moments.keys())
-            if all_masked_moments:
-                peak_ids.update(all_masked_moments.keys())
 
             # If no peaks found, create a single result row with no peak info
             if len(peak_ids) == 0:
@@ -1261,7 +1414,7 @@ class SpectralAnalyzer:
                         # Extract value for filename (acceptable use of .value for formatting)
                         vel_val = peak_velocity.to(u.km/u.s).value if hasattr(peak_velocity, 'to') else peak_velocity
 
-                        for moment_type in ['moment0', 'moment1']:
+                        for moment_type in ['moment0', 'moment1', 'peak_intensity', 'velocity_of_peak']:
                             if moment_type in moments and moments[moment_type] is not None:
                                 moment_file = os.path.join(source_output_dir,
                                                          f"{source_id}_{spw_name}_{peak_id}_{moment_type}_v{vel_val:.1f}.fits")
@@ -1310,16 +1463,24 @@ class SpectralAnalyzer:
                 peaks_catalog.write(orig_peaks_file, overwrite=True)
                 result['original_peaks_file'] = orig_peaks_file
                 print(f"    Saved original peaks catalog: {os.path.basename(orig_peaks_file)}")
-            print(f"  Completed analysis of {spw_name}")
+            print(f"  Completed analysis of {spw_name} in {time.time() - tf0:0.1f} seconds")
 
         # Save summary results for this source
         if all_results:
             summary_table = Table(all_results)
             summary_file = os.path.join(source_output_dir, f"{source_id}_analysis_summary.fits")
-            summary_table.write(summary_file, overwrite=True)
-            print(f"Saved analysis summary to {summary_file}")
+            if len(summary_table) > 0:
+                try:
+                    summary_table.write(summary_file, overwrite=True)
+                    print(f"Saved analysis summary to {summary_file}")
+                except Exception as ex:
+                    print(f"Failed to save analysis summary: {ex}")
+                    print(summary_table)
+                    print(all_results)
+            else:
+                print(f"No valid data found for analysis summary.")
 
-        print(f"=== Completed analysis of {source_id} ===")
+        print(f"=== Completed analysis of {source_id} in {time.time() - tf0:0.1f} seconds ===")
 
     def analyze_all_sources(self, max_sources=None):
         """
@@ -1375,7 +1536,7 @@ def main():
 def _get_field_from_filename(filename: str) -> str:
     """Extract the source_field prefix from a filename.
 
-    Expected filename format: <source_field>_group..._spw... .image.fits
+    Expected filename format: <source_field>_group..._spw... .image.pbcor.fits
     """
     base = os.path.basename(filename)
     if '_group' in base:

@@ -808,7 +808,7 @@ class SpectralAnalyzer:
 
         return masked_moments
 
-    def create_diagnostic_gallery(self, source_id, spectrum, moments, masked_moments, peaks_catalog, output_path, peak_id=None, peak_info=None):
+    def create_diagnostic_gallery(self, source_id, spectrum, moments, masked_moments, peaks_catalog, output_path, peak_id=None, peak_info=None, no_peaks=False):
         """
         Create a diagnostic image gallery for a specific spectral line/peak
 
@@ -840,13 +840,10 @@ class SpectralAnalyzer:
                       f"frequency={peak_info.get('frequency', 'N/A')}, SNR={peak_info.get('snr', 'N/A')}")
         print(f"    Spectrum from {spectrum.spectral_axis.min()} to {spectrum.spectral_axis.max()}")
 
-        try:
-            root_source_id = "_".join(source_id.split("_")[:-1])
-            continuum_image_name = f'/orange/adamginsburg/salt/dihca/{root_source_id}.quick_cont.pbclean.image.fits'
-            conthdu = fits.open(continuum_image_name)[0]
-            print(f"Found {continuum_image_name}")
-        except Exception as ex:
-            print(ex)
+        root_source_id = "_".join(source_id.split("_")[:-1])
+        continuum_image_name = f'/orange/adamginsburg/salt/dihca/{root_source_id}.quick_cont.pbclean.image.fits'
+        conthdu = fits.open(continuum_image_name)[0]
+        print(f"Found {continuum_image_name}")
 
         fig = plt.figure(figsize=(15, 12))
         gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.3, wspace=0.3)
@@ -895,8 +892,11 @@ class SpectralAnalyzer:
                 print("There was some exception I still don't understand that is probably triggered by the isfinite check", ex)
                 print("masked_data: ", masked_data)
         else:
-            ax3.text(0.5, 0.5, 'No masked moment-0 data', ha='center', va='center', transform=ax3.transAxes)
-            ax3.set_title('Masked Moment-0 (unavailable)')
+            if no_peaks:
+                ax3.text(0.5, 0.5, 'No masked moment-0 data', ha='center', va='center', transform=ax3.transAxes)
+                ax3.set_title('Masked Moment-0 (unavailable)')
+            else:
+                raise ValueError("No masked moment-0 data available for plotting")
 
         # Row 2: moment-1, velocity-of-peak, masked moment-1
         ax4 = fig.add_subplot(gs[1, 0])
@@ -929,7 +929,11 @@ class SpectralAnalyzer:
                 ax4.text(0.5, 0.5, 'No finite data', ha='center', va='center', transform=ax4.transAxes)
                 ax4.set_title('Moment-1 (no data)')
         else:
-            raise ValueError("No moment-1 data available for plotting")
+            if no_peaks:
+                ax4.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax4.transAxes)
+                ax4.set_title('Moment-1 (no data)')
+            else:
+                raise ValueError("No moment-1 data available for plotting")
 
         ax5 = fig.add_subplot(gs[1, 1])
         if moments and moments.get('velocity_of_peak') is not None:
@@ -961,9 +965,11 @@ class SpectralAnalyzer:
                 ax5.text(0.5, 0.5, 'No finite data', ha='center', va='center', transform=ax5.transAxes)
                 ax5.set_title('Velocity of Peak (no data)')
         else:
-            ax5.text(0.5, 0.5, 'No velocity of peak data', ha='center', va='center', transform=ax5.transAxes)
-            ax5.set_title('Velocity of Peak (unavailable)')
-            raise ValueError("No velocity of peak data available for plotting")
+            if no_peaks:
+                ax5.text(0.5, 0.5, 'No velocity of peak data', ha='center', va='center', transform=ax5.transAxes)
+                ax5.set_title('Velocity of Peak (unavailable)')
+            else:
+                raise ValueError("No velocity of peak data available for plotting")
 
         ax6 = fig.add_subplot(gs[1, 2])
         if masked_moments and masked_moments.get('masked_moment1') is not None:
@@ -995,9 +1001,11 @@ class SpectralAnalyzer:
                 ax6.text(0.5, 0.5, 'No finite data', ha='center', va='center', transform=ax6.transAxes)
                 ax6.set_title('Masked Moment-1 (no data)')
         else:
-            ax6.text(0.5, 0.5, 'No masked moment-1 data', ha='center', va='center', transform=ax6.transAxes)
-            ax6.set_title('Masked Moment-1 (unavailable)')
-            raise ValueError("No masked moment-1 data available for plotting")
+            if no_peaks:
+                ax6.text(0.5, 0.5, 'No masked moment-1 data', ha='center', va='center', transform=ax6.transAxes)
+                ax6.set_title('Masked Moment-1 (unavailable)')
+            else:
+                raise ValueError("No masked moment-1 data available for plotting")
 
         # Row 3: spectrum (spans all columns)
         ax7 = fig.add_subplot(gs[2, :])
@@ -1042,9 +1050,11 @@ class SpectralAnalyzer:
                             rotation=90, ha='right', va='bottom', fontsize=10,
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.3))
         else:
-            ax7.text(0.5, 0.5, 'No spectrum data available', ha='center', va='center', transform=ax7.transAxes)
-            ax7.set_title('Extracted Spectrum (unavailable)')
-            raise ValueError("No spectrum data available for plotting")
+            if no_peaks:
+                ax7.text(0.5, 0.5, 'No spectrum data available', ha='center', va='center', transform=ax7.transAxes)
+                ax7.set_title('Extracted Spectrum (unavailable)')
+            else:
+                raise ValueError("No spectrum data available for plotting")
 
         # Create title with peak-specific information
         title = f'Diagnostic Gallery: {source_id}'
@@ -1264,7 +1274,7 @@ class SpectralAnalyzer:
                     spectrum = cube.max(axis=(1,2))
                     print(f" in t={time.time() - t0:0.1f} seconds")
                     self.create_diagnostic_gallery(source_id, spectrum, {}, {},
-                                                {}, gallery_path)
+                                                {}, gallery_path, no_peaks=True)
                     continue
                 else:
                     if 'detections' in source_row and isinstance(source_row['detections'], list):
@@ -1347,7 +1357,7 @@ class SpectralAnalyzer:
                 # No peaks found - create a single default gallery
                 gallery_path = os.path.join(source_output_dir, f"{source_id}_{spw_name}_no_peaks_diagnostics.png")
                 self.create_diagnostic_gallery(source_id, spectrum, {}, {},
-                                            consolidated_peaks, gallery_path)
+                                            consolidated_peaks, gallery_path, no_peaks=True)
 
 
             # If no peaks found, create a single result row with no peak info

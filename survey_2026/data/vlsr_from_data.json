@@ -1,0 +1,51 @@
+{
+  "G014.9958-00.6732": {
+    "v_LSR_kms": 19.81000188597862,
+    "n_tracers": 2,
+    "tracers": {
+      "C18O_2-1": {
+        "v_LSR_kms": 20.197112274086567,
+        "snr": 34.52359390258789,
+        "cube": "/orange/adamginsburg/salt/survey_2026/uvdata/2019.1.00195.L/G014.9958-00.6732/member.uid___A001_X146c_Xd1._G014.9958-00.6732__sci.spw27.cube.I.pbcor.fits"
+      },
+      "13CO_2-1": {
+        "v_LSR_kms": 19.422891497870676,
+        "snr": 138.20823669433594,
+        "cube": "/orange/adamginsburg/salt/survey_2026/uvdata/2019.1.00195.L/G014.9958-00.6732/member.uid___A001_X146c_Xd1._G014.9958-00.6732__sci.spw27.cube.I.pbcor.fits"
+      }
+    },
+    "method": "data"
+  },
+  "G081.6802+00.5405B": {
+    "v_LSR_kms": -1.0129072182899108,
+    "n_tracers": 5,
+    "tracers": {
+      "H2CO_303-202": {
+        "v_LSR_kms": -141.8673088634524,
+        "snr": 13.912294387817383,
+        "cube": "/orange/adamginsburg/salt/survey_2026/uvdata/2019.1.00263.S/G081.6802+00.5405B/member.uid___A001_X1465_X346f.DR21_sci.spw29.cube.I.pbcor.fits"
+      },
+      "C18O_2-1": {
+        "v_LSR_kms": -1.0129072182899108,
+        "snr": 14.115070343017578,
+        "cube": "/orange/adamginsburg/salt/survey_2026/uvdata/2019.1.00263.S/G081.6802+00.5405B/member.uid___A001_X1465_X346f.DR21_sci.spw31.cube.I.pbcor.fits"
+      },
+      "13CO_2-1": {
+        "v_LSR_kms": -2.9603613847652452,
+        "snr": 32.481502532958984,
+        "cube": "/orange/adamginsburg/salt/survey_2026/uvdata/2019.1.00263.S/G081.6802+00.5405B/member.uid___A001_X1465_X346f.DR21_sci.spw31.cube.I.pbcor.fits"
+      },
+      "HC3N_24-23": {
+        "v_LSR_kms": -0.9155563085172326,
+        "snr": 12.696435928344727,
+        "cube": "/orange/adamginsburg/salt/survey_2026/uvdata/2019.1.00263.S/G081.6802+00.5405B/member.uid___A001_X1465_X346f.DR21_sci.spw29.cube.I.pbcor.fits"
+      },
+      "SO_65-54": {
+        "v_LSR_kms": 4.932494636750548,
+        "snr": 9.303794860839844,
+        "cube": "/orange/adamginsburg/salt/survey_2026/uvdata/2019.1.00263.S/G081.6802+00.5405B/member.uid___A001_X1465_X346f.DR21_sci.spw31.cube.I.pbcor.fits"
+      }
+    },
+    "method": "data"
+  }
+}

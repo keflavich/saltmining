@@ -1,0 +1,68 @@
+{
+  "G010.8411-02.5919": {
+    "v_LSR_kms": 11.8,
+    "reference": "Fernandez-Lopez et al. 2013, ApJ 778, 72; Qiu & Zhang 2009, ApJ 702, L66 (HH80-81/IRAS 18162-2048 cloud systemic from CO/NH3/SO2)",
+    "notes": "Source is HH 80-81 / IRAS 18162-2048 / GGD 27. Cloud systemic v_LSR ~ +11.8 to +12 km/s; major molecular line components at 11.9 and 12.8 km/s. No 6.7 GHz methanol maser association; intermediate-mass protostar.",
+    "method": "literature"
+  },
+  "G014.9958-00.6732": {
+    "v_LSR_kms": 21.3,
+    "reference": "Caswell et al. 2010, MNRAS 404, 1029 (MMB 15.034-0.677, peak); also M17 SW cloud ~20 km/s (Wilson et al. 2003)",
+    "notes": "Source identified with M17 SW / NAME M17 L region. Nearest 6.7 GHz methanol maser is MMB G15.034-0.677 at v_pk = 21.3 km/s (~2.3' offset). M17 SW giant molecular cloud has v_LSR ~ 20 km/s.",
+    "method": "literature"
+  },
+  "G026.4207+01.6858": {
+    "v_LSR_kms": null,
+    "reference": null,
+    "notes": "No 6.7 GHz methanol maser match in MMB or GLOSTAR catalogs within 2 arcmin. Position is near RAFGL 5502 (2.4 arcsec) at high latitude (b=+1.69 deg). This source is not a confirmed massive YSO with measured cloud v_LSR in the searched literature; SIMBAD has no radial velocity. Genuine dense-gas systemic velocity unknown after thorough search.",
+    "method": "literature"
+  },
+  "G076.3829-00.6210": {
+    "v_LSR_kms": -1.0,
+    "reference": "Schneider et al. 2018, A&A 617, A45 (S106 OI 63 micron paper); Schneider et al. 2002 A&A 384, 225 (S106 cloud)",
+    "notes": "Source is Sh 2-106 (S106 IR/FIR). Molecular cloud systemic velocity v_LSR = -1 km/s based on 13CO 2-1; H2 outflow gas at 1.5 km/s.",
+    "method": "literature"
+  },
+  "G080.8645+00.4197": {
+    "v_LSR_kms": -4.16,
+    "reference": "Ortiz-Leon et al. 2021, A&A 651, A87 (GLOSTAR Cygnus X 6.7 GHz methanol maser survey - Paper III); Beuther et al. 2022, A&A 665, A63 (CASCADE DR20)",
+    "notes": "Source is DR20 (G80.8617+0.3834). 6.7 GHz Class II methanol maser peak v_LSR = -4.16 km/s. DR20 belongs to the Cygnus X velocity component -10 to 1 km/s.",
+    "method": "literature"
+  },
+  "G081.6802+00.5405B": {
+    "v_LSR_kms": -3.0,
+    "reference": "Schneider et al. 2010, A&A 520, A49 (DR21 filament); Ossenkopf-Okada et al. 2010, A&A 518, L79 (DR21 13CO ridge)",
+    "notes": "Source is at DR21 main HII region (RA 20:39:01, Dec +42:19:54, =G81.6788+0.5377 in GLOSTAR). DR21 ridge / DR21(OH) systemic v_LSR = -3 km/s from CO isotopologues. GLOSTAR detects a 6.7 GHz methanol maser feature at v_LSR = -0.73 km/s here.",
+    "method": "literature"
+  },
+  "G189.0307+00.7821": {
+    "v_LSR_kms": 8.9,
+    "reference": "Caswell et al. 2010, MNRAS 404, 1029 (MMB 189.030+0.783, peak); Mookerjea et al. 2023, MNRAS 523, 5388 (AFGL 6366S)",
+    "notes": "Source is AFGL 6366S = IRAS 06056+2131 = G189.030+0.784. MMB 6.7 GHz methanol maser peak v_LSR = 8.9 km/s (range 8.5-10.0). Note: Mookerjea+2023 quote a methanol-derived 'systemic' v_LSR = 1.7 km/s, but the MMB published peak is 8.9 km/s and the cloud emission spans -3 to 13 km/s.",
+    "method": "literature"
+  },
+  "G192.6005-00.0479": {
+    "v_LSR_kms": 4.6,
+    "reference": "Caswell et al. 2010, MNRAS 404, 1029 (MMB 192.600-0.048); Zinchenko et al. 2020 A&A 642, A129 (S255IR systemic)",
+    "notes": "Source is S255IR / S255 NIRS3 / [HBM2005] G192.60-0.05 hot core. MMB 6.7 GHz methanol maser peak v_LSR = 4.6 km/s (range 1-6 km/s). Hot-core systemic from ALMA ~5 km/s.",
+    "method": "literature"
+  },
+  "G232.6207+00.9959": {
+    "v_LSR_kms": 22.9,
+    "reference": "Caswell et al. 2010, MNRAS 404, 1029 (MMB 232.620+0.996); Reid et al. 2009, ApJ 693, 397 (parallax of G232.6+1.0 at v_LSR = 22.8)",
+    "notes": "Source is IRAS 07299-1651 / RCW 7. MMB 6.7 GHz methanol maser peak v_LSR = 22.9 km/s (range 18.5-24.5). Reid et al. 2009 parallax paper used v_LSR = 22.8 km/s feature.",
+    "method": "literature"
+  },
+  "G345.0061+01.7944C": {
+    "v_LSR_kms": -21.0,
+    "reference": "Caswell et al. 2010, MNRAS 404, 1029 (MMB 345.010+1.792); Vlemmings et al. 2011, A&A 529, A95 (G345.01+1.79 maser)",
+    "notes": "Source is IRAS 16533-4009 = G345.01+1.79 (massive star-forming region). MMB 6.7 GHz methanol maser peak v_LSR = -21.0 km/s (range -24 to -16). Nearby maser G345.012+1.797 has peak -12.2 km/s (range -16 to -10). Cloud systemic from CS/methanol surveys typically -16 to -22 km/s.",
+    "method": "literature"
+  },
+  "G018.3412+01.7681": {
+    "v_LSR_kms": 33.0,
+    "reference": "IRAS 18151-1208 6.7 GHz methanol (MMB Caswell+2010)",
+    "notes": "IRAS 18151-1208/G018.34+01.77 hot core",
+    "method": "literature"
+  }
+}

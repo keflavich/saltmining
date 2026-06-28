@@ -1,0 +1,3 @@
+target,NaCl_kind,NaCl_K_or_3s_mK,KCl_kind,KCl_K_or_3s_mK,H2O_kind,H2O_K_or_3s_mK,RRL_kind,RRL_K_or_3s_mK,SiO_kind,SiO_K_or_3s_mK,SO_kind,SO_K_or_3s_mK,COM_kind,reference,notes
+Orion-SrcI,det,,det,,det,,,,det,,det,,det,Ginsburg+2019 (ApJ 872 54),Source I disk: NaCl/KCl vib bands; H2O 232.687 disk; SiO/SO/SO2/COMs all detected
+Orion-BN,na,,na,,na,,det,,na,,na,,na,Plambeck+2013 (ApJ 765 40) and Galvan-Madrid+2012 (A&A 537 A56),BN hypercompact HII region; H30alpha+H/He recombination lines only - no molecular lines

@@ -192,9 +192,34 @@ def main():
     src = pd.read_csv(SRC_CSV)
     src_by_name = {n: r for n, r in zip(src["name"], src.to_dict("records"))}
     out_rows = []
+
+    # Literature overrides: targets whose detections we take from the
+    # published literature (no on-disk pipeline analysis needed/reused).
+    lit_path = ROOT / "data/literature_detections.csv"
+    if lit_path.exists():
+        lit = pd.read_csv(lit_path)
+        for _, lr in lit.iterrows():
+            row = {"target": str(lr["target"])}
+            for sp in SPECIES:
+                kind_col = f"{sp}_kind"
+                val_col = f"{sp}_K_or_3s_mK"
+                kind = lr.get(kind_col, "na") if kind_col in lit.columns else "na"
+                if pd.isna(kind) or not kind:
+                    kind = "na"
+                K_val = lr.get(val_col, np.nan) if val_col in lit.columns else np.nan
+                # mK -> K for storage
+                row[f"{sp}_kind"] = str(kind)
+                row[f"{sp}_K"] = (float(K_val) / 1000.0) if pd.notna(K_val) and K_val != "" else np.nan
+                row[f"{sp}_prog"] = str(lr.get("reference", "literature"))
+            out_rows.append(row)
+
+    lit_targets = {r["target"] for r in out_rows}
+
     for target_dir in sorted(ANALYSIS.iterdir()):
         if not target_dir.is_dir():
             continue
+        if target_dir.name in lit_targets:
+            continue  # literature override takes precedence
         df_all = best_for_target(target_dir)
         if df_all is None or df_all.empty:
             continue

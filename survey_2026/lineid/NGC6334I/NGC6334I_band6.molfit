@@ -1,0 +1,87 @@
+%============================================================================================================================
+% XCLASS molfit for NGC 6334I (1.3 kpc, 2e5 Lsun, hyperluminous hot core)
+% Brightest mm cont source = id=5 at ra=260.2226, dec=-35.7827, peak Jy/beam 0.109
+% v_LSR = -6.9 km/s (Brogan+2018 -7; we use -7.0)
+% Band: 239.2-241.6 GHz (spw29/31) + 256.6-258.8 GHz (spw25/27)
+% Bhula mm31 W51 template as starting point. This source is the
+% most line-rich in the survey so expect MANY non-detections to be
+% confusion-driven; uncomment species iteratively.
+%============================================================================================================================
+%    source size:                 T_kin:               N_tot:            V_width:                V_off:   CFFlag:    keyword:
+%       [arcsec]:                   [K]:              [cm-2]:            [km /s]:              [km /s]:       []:         []:
+
+% --- Strong COMs (start here) ---
+CH3OH;v=0;           1
+ 100       270     2e+18     6    -7.0         c
+CH3OCHO;v=0;           1
+ 100       100     1e+18     5    -7.0         c
+CH3CN;v=0;           1
+ 100       300     2e+17     6    -7.0         c
+CH3CN;v8=1;#1           1
+ 100       300     3e+17     7    -7.0         c
+C2H5CN;v=0;           1
+ 100       100     5e+16     6    -7.0         c
+CH3COCH3;v=0;           1
+ 100       60      5e+16     5    -7.0         c
+HC(O)NH2;v=0;           1
+ 100       50      3e+16     6    -7.0         c
+
+% --- Salts (the species we want to disentangle) ---
+NaCl;v=0;           1
+ 100       400     5e+13     3    -7.0         c
+NaCl;v=1;           1
+ 100       400     5e+13     3    -7.0         c
+KCl;v=0;           1
+ 100       400     2e+13     3    -7.0         c
+H2O;v2=1;           1
+ 100       3000    2e+15     5    -7.0         c
+
+% --- Other Bhula species (uncomment selectively) ---
+%CH3OH;v12=1;           1
+% 100       160     5e+18     5    -7.0         c
+%OCS;v=0;           1
+% 100       100     5e+16     6    -7.0         c
+%HCCCN;v=0;           1
+% 100       100     1e+16     6    -7.0         c
+%CO-18;v=0;           1
+% 100       100     3e+17     4    -7.0         c
+%C-13-H3CN;v=0;           1
+% 100       100     2e+15     5    -7.0         c
+%H2CS;v=0;           1
+% 100       60      5e+16     5    -7.0         c
+%CH3CHO;v=0;           1
+% 100       200     2e+16     5    -7.0         c
+%t-HCOOH;v=0;           1
+% 100       100     1e+16     6    -7.0         c
+%CH3C-13-N;v=0;           1
+% 100       150     5e+15     6    -7.0         c
+%H2C-13-O;v=0;           1
+% 100       100     2e+15     5    -7.0         c
+%OC-13-S;v=0;           1
+% 100       100     5e+15     5    -7.0         c
+%C-13-H3OH;v=0;           1
+% 100       60      4e+17     5    -7.0         c
+%CH3CCH;v=0;#2           1
+% 100       100     3e+16     6    -7.0         c
+%HNCO;v=0;           1
+% 100       250     5e+16     7    -7.0         c
+%SiO;v=0;#1           1
+% 100       150     1e+15     10   -7.0         c
+%SO;v=0;#2           1
+% 100       100     2e+16     7    -7.0         c
+%CO;v=0;           1
+% 100       100     3e+18     16   -7.0         c
+%C2H5OH;v=0;#1           1
+% 100       300     2e+17     5    -7.0         c
+%CH3OCH3;v=0;           1
+% 100       60      3e+17     4    -7.0         c
+%H2CO;v=0;           1
+% 100       100     3e+16     8    -7.0         c
+%CH3NCO;v=0;#1           1
+% 100       60      8e+15     6    -7.0         c
+%C2H3CN;v=0;           1
+% 100       80      5e+15     7    -7.0         c
+%HC(O)NH2;v12=1;           1
+% 100       300     2e+16     6    -7.0         c
+%C-13-S;v=0;           1
+% 100       60      5e+15     4    -7.0         c

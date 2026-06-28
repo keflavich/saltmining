@@ -1,0 +1,75 @@
+%============================================================================================================================
+% XCLASS molfit for G326.6618+00.5207 (Brand "W22" hot core, 1.8 kpc, ~1.5e4 Lsun)
+% Adapted from /orange/adamginsburg/w51/hotcores/linecatalog/ethanbhula/mm31_band6.molfit
+% v_LSR = -39.6 km/s (RMS), peak T(spw33) ~366 K (hot dust + lines)
+%
+% Column 1: source size (arcsec) -- 100 = larger than beam (no beam dilution)
+% Column 2: T_kin (K)            -- LTE excitation T; tune per molecule
+% Column 3: N_tot (cm^-2)        -- total column
+% Column 4: V_width (km/s)       -- intrinsic FWHM
+% Column 5: V_off (km/s)         -- v_LSR offset; XCLASS expects velocity here
+% Column 6: CFFlag               -- 63 = fit all 5 params
+% Column 7: keyword              -- c = component identifier
+%
+% Start commented out and uncomment a few species at a time while iterating.
+%============================================================================================================================
+%    source size:                 T_kin:               N_tot:            V_width:                V_off:   CFFlag:    keyword:
+%       [arcsec]:                   [K]:              [cm-2]:            [km /s]:              [km /s]:       []:         []:
+
+% --- Strong COMs (always uncomment first) ---
+CH3OH;v=0;           1
+ 100       270     1e+18     5    -39.6         c
+CH3OCHO;v=0;           1
+ 100       90      5e+17     4    -39.6         c
+CH3CN;v=0;           1
+ 100       300     1e+17     6    -39.6         c
+CH3CN;v8=1;#1           1
+ 100       300     1.5e+17     7    -39.6         c
+
+% --- Salts (the species we want to disentangle) ---
+NaCl;v=0;           1
+ 100       450     5e+13     3    -39.6         c
+NaCl;v=1;           1
+ 100       450     5e+13     3    -39.6         c
+KCl;v=0;           1
+ 100       450     2e+13     3    -39.6         c
+H2O;v2=1;           1
+ 100       2500    1e+15     5    -39.6         c
+
+% --- Other COMs from Bhula mm31 list (uncomment as needed) ---
+%CH3COCH3;v=0;           1
+% 100       50     2e+16     4    -39.6         c
+%C2H5CN;v=0;           1
+% 100       70     2e+16     6    -39.6         c
+%OCS;v=0;           1
+% 100       100     3.75e+16     6    -39.6         c
+%HC(O)NH2;v=0;           1
+% 100       40     9e+15     6    -39.6         c
+%HCCCN;v=0;           1
+% 100       100     1.75e+15     6    -39.6         c
+%CO-18;v=0;           1
+% 100       100     2e+17     4    -39.6         c
+%C-13-H3CN;v=0;           1
+% 100       100     9e+14     4    -39.6         c
+%H2CS;v=0;           1
+% 100       60     3e+16     5    -39.6         c
+%CH3CHO;v=0;           1
+% 100       200     1e+16     5    -39.6         c
+%t-HCOOH;v=0;           1
+% 100       100     7e+15     6    -39.6         c
+%C2H5OH;v=0;#1           1
+% 100       350     1.1e+17     4    -39.6         c
+%CH3OCH3;v=0;           1
+% 100       60     1.5e+17     4    -39.6         c
+%H2CO;v=0;           1
+% 100       100     2e+16     8    -39.6         c
+%CH3NCO;v=0;#1           1
+% 100       60     4.5e+15     6    -39.6         c
+%C2H3CN;v=0;           1
+% 100       80     2.5e+15     7    -39.6         c
+%SiO;v=0;#1           1
+% 100       100     4.5e+14     18   -39.6         c
+%SO;v=0;#2           1
+% 100       100     1.1e+16     7    -39.6         c
+%C-13-S;v=0;           1
+% 100       60     2e+15     4    -39.6         c

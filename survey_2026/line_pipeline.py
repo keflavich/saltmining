@@ -574,9 +574,9 @@ def process_source(src, cubes, lines, outroot, vlsr_kms, distance_kpc, on_kms_de
                                      on_kms=70.0 if line["group"]=="RRL" else 15.0)
         hdr_m = cutout.wcs.celestial.to_header()
         hdr_m["BUNIT"] = "km/s"
-        fits.PrimaryHDU(m1, hdr_m).writeto(sdir / f"{line['name']}_mom1.fits", overwrite=True)
+        fits.PrimaryHDU(m1, hdr_m).writeto(sdir / f"source_{sid:02d}_{line['name']}_mom1.fits", overwrite=True)
         hdr0 = hdr_m.copy(); hdr0["BUNIT"] = "Jy/beam km/s"
-        fits.PrimaryHDU(m0, hdr0).writeto(sdir / f"{line['name']}_mom0.fits", overwrite=True)
+        fits.PrimaryHDU(m0, hdr0).writeto(sdir / f"source_{sid:02d}_{line['name']}_mom0.fits", overwrite=True)
         try:
             plot_line_diagnostic(m, line, sid, sdir, vlsr_kms, cutout)
         except Exception as e:
@@ -728,10 +728,16 @@ def main():
         top3 = df_in.nlargest(3, "snr")
     top3_paths = []
     for _, r in top3.iterrows():
-        sdir = outroot / f"source_{int(r['source']):02d}"
-        p = sdir / f"{r['line']}_mom0.fits"
-        if p.exists():
-            top3_paths.append(p)
+        sid = int(r['source'])
+        sdir = outroot / f"source_{sid:02d}"
+        # New naming: source_<NN>_<line>_mom0.fits. Fall back to legacy
+        # <line>_mom0.fits for pre-existing analysis runs.
+        p_new = sdir / f"source_{sid:02d}_{r['line']}_mom0.fits"
+        p_old = sdir / f"{r['line']}_mom0.fits"
+        if p_new.exists():
+            top3_paths.append(p_new)
+        elif p_old.exists():
+            top3_paths.append(p_old)
     print(f"top-3 mom0 maps: {[p.name for p in top3_paths]}")
 
     # CARTA snippet — paths must be relative to CARTA root (/orange/adamginsburg)

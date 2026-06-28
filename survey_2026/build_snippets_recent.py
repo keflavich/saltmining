@@ -77,7 +77,43 @@ def find_region_files(target):
     return regs
 
 
-def build_snippet_code(cont, cubes, regs):
+def find_detection_mom0s(target, max_per_source=3, snr_threshold=5.0):
+    """For each (proposal, source) with >=1 line at snr>=5, return up to
+    max_per_source mom0 FITS paths (highest-SNR lines first). New-naming
+    convention: source_<NN>_<line>_mom0.fits inside source_<NN>/."""
+    import pandas as pd
+    base = ROOT / "analysis_products" / target
+    if not base.is_dir():
+        return []
+    out = []
+    for prop_dir in sorted(base.glob("2*")):
+        meas = prop_dir / "line_measurements.csv"
+        if not meas.exists():
+            continue
+        try:
+            df = pd.read_csv(meas)
+        except pd.errors.EmptyDataError:
+            continue
+        if df.empty or "snr" not in df.columns:
+            continue
+        hits = df[df["snr"] >= snr_threshold]
+        if hits.empty:
+            continue
+        for sid, g in hits.groupby("source"):
+            sid_i = int(sid)
+            top = g.nlargest(max_per_source, "snr")
+            sdir = prop_dir / f"source_{sid_i:02d}"
+            for _, r in top.iterrows():
+                p_new = sdir / f"source_{sid_i:02d}_{r['line']}_mom0.fits"
+                p_old = sdir / f"{r['line']}_mom0.fits"
+                if p_new.exists():
+                    out.append(p_new)
+                elif p_old.exists():
+                    out.append(p_old)
+    return out
+
+
+def build_snippet_code(cont, cubes, regs, mom0s=None):
     lines = []
     rest = list(cubes)
     if cont is not None:
@@ -87,6 +123,9 @@ def build_snippet_code(cont, cubes, regs):
         lines.append(f'await app.openFile("{carta_path(first)}")')
     for c in rest:
         lines.append(f'await app.appendFile("{carta_path(c)}")')
+    if mom0s:
+        for m in mom0s:
+            lines.append(f'await app.appendFile("{carta_path(m)}")')
     for r in regs:
         rdir = carta_path(r.parent) + "/"
         rname = r.name
@@ -107,7 +146,8 @@ def main():
         if cont is None and not cubes:
             print(f"  {tgt}: NO LOCAL DATA — skipping")
             continue
-        code = build_snippet_code(cont, cubes, regs)
+        mom0s = find_detection_mom0s(tgt)
+        code = build_snippet_code(cont, cubes, regs, mom0s=mom0s)
         snippet = {
             "$schema": "https://cartavis.github.io/schemas/snippet_schema_1.json",
             "categories": [CATEGORY],
@@ -118,7 +158,7 @@ def main():
         out = SNIP / f"{tgt}_2026.json"
         out.write_text(json.dumps(snippet, indent=4))
         print(f"  wrote {out.name}: cont={'yes' if cont else 'no'}, "
-              f"cubes={len(cubes)}, regs={len(regs)}")
+              f"cubes={len(cubes)}, regs={len(regs)}, mom0s={len(mom0s)}")
 
 
 if __name__ == "__main__":

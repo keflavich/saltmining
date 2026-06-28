@@ -179,13 +179,44 @@ def aggregate_species(df_all, target_dir: Path):
     return out
 
 
-def fmt_cell(kind, val_K):
+def fmt_cell(kind, val_K, flag_marker=""):
     if kind == "na":
         return r"\nodata"
     mK = val_K * 1000.0
     if kind == "det":
-        return f"{mK:.1f}"
+        return f"{mK:.1f}{flag_marker}"
     return rf"$<${mK:.1f}"
+
+
+# Map per-species warning categories to LaTeX superscripts on the cell
+SPECIES_FLAG_MARKERS = {
+    "NaCl": [("NaCl_VEXC_ONLY", "$^{v}$"),
+             ("NaCl_SINGLE_LINE_DET", "$^{s}$"),
+             ("H2O_NONDET_WITH_NACL_DET", "$^{w}$"),
+             ("HIGH_CONFUSION", "$^{c}$")],
+    "KCl":  [("KCl_VEXC_ONLY", "$^{v}$"),
+             ("KCL_DET_NACL_NONDET", "$^{n}$"),
+             ("KCl_SINGLE_LINE_DET", "$^{s}$"),
+             ("HIGH_CONFUSION", "$^{c}$")],
+    "H2O":  [("H2O_SINGLE_LINE_DET", "$^{s}$"),
+             ("HIGH_CONFUSION", "$^{c}$")],
+    "RRL":  [("RRL_SINGLE_LINE_DET", "$^{s}$"),
+             ("HIGH_CONFUSION", "$^{c}$")],
+    "SiO":  [("SiO_SINGLE_LINE_DET", "$^{s}$")],
+    "SiS":  [("SiS_SINGLE_LINE_DET", "$^{s}$")],
+    "SO":   [("SO_SINGLE_LINE_DET", "$^{s}$")],
+}
+
+
+def marker_for(species, flags_str):
+    if not flags_str:
+        return ""
+    flags = set(flags_str.split("|"))
+    marks = []
+    for flagname, mark in SPECIES_FLAG_MARKERS.get(species, []):
+        if flagname in flags:
+            marks.append(mark)
+    return "".join(marks)
 
 
 def main():
@@ -231,6 +262,26 @@ def main():
             **{f"{sp}_prog": agg[sp][2] for sp in SPECIES},
         })
     out = pd.DataFrame(out_rows)
+
+    # Merge evidence audit flags (one row per analyzed target/proposal).
+    # We use the union of flags across proposals for each target.
+    audit_csv = ROOT / "data/evidence_audit.csv"
+    if audit_csv.exists():
+        a = pd.read_csv(audit_csv)
+        if not a.empty and "flags" in a.columns:
+            flags_per_target = (a.groupby("target")["flags"]
+                                  .apply(lambda s: "|".join(sorted(set(
+                                      f for v in s.dropna() for f in str(v).split("|") if f
+                                  ))))
+                                  .reset_index().rename(columns={"flags": "warning_flags"}))
+            out = out.merge(flags_per_target, left_on="target", right_on="target",
+                              how="left")
+            out["warning_flags"] = out["warning_flags"].fillna("")
+        else:
+            out["warning_flags"] = ""
+    else:
+        out["warning_flags"] = ""
+
     out.to_csv(OUT_CSV, index=False)
     print(f"wrote {OUT_CSV} ({len(out)} targets)")
 
@@ -251,7 +302,9 @@ def main():
     out_sorted = out.sort_values("target")
     for _, r in out_sorted.iterrows():
         tgt = str(r["target"]).replace("_", r"\_")
-        cells = [fmt_cell(r[f"{sp}_kind"], r[f"{sp}_K"]) for sp in SPECIES]
+        flags = str(r.get("warning_flags", "") or "")
+        cells = [fmt_cell(r[f"{sp}_kind"], r[f"{sp}_K"], marker_for(sp, flags))
+                  for sp in SPECIES]
         lines.append(tgt + " & " + " & ".join(cells) + r" \\")
     lines += [
         r"\enddata",
@@ -260,7 +313,14 @@ def main():
         r"program+line combination with the smallest 3$\sigma$ noise at 10 km/s "
         r"channelization. RRL = any Hn$\alpha$/$\beta$/$\gamma$/$\delta$. Values are at "
         r"the native synthesized beam (not smoothed to a common beam); see "
-        r"Table~\ref{tab:naclrrl} for the spatially-smoothed 300\,AU equivalents.}",
+        r"Table~\ref{tab:naclrrl} for the spatially-smoothed 300\,AU equivalents. "
+        r"Warning superscripts on detection cells: $^{v}$ = the 5$\sigma$ line is "
+        r"vibrationally excited (v$\ge$2) while the ground-state line(s) are "
+        r"covered but $<$5$\sigma$ -- a big red flag for misidentification; "
+        r"$^{s}$ = single 5$\sigma$ line drives the detection; $^{w}$ = the H$_2$O "
+        r"lines are covered but not detected, despite a NaCl detection (warning); "
+        r"$^{n}$ = KCl detected without NaCl detection (warning); $^{c}$ = "
+        r"line-confusion fraction $f(>5\sigma) > 0.02$ in the recorded spectrum.}",
         r"\end{deluxetable*}",
     ]
     OUT_TEX.write_text("\n".join(lines) + "\n")

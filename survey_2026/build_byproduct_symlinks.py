@@ -92,6 +92,22 @@ def main():
                            BYTYPE / "salt_stack" /
                            f"{target}_{proposal}_src{sid}.png")
                 n_salt += 1
+            for ns in src_dir.glob("nacl_stack.png"):
+                make_link(ns,
+                           BYTYPE / "nacl_stack" /
+                           f"{target}_{proposal}_src{sid}.png")
+            for ks in src_dir.glob("kcl_stack.png"):
+                make_link(ks,
+                           BYTYPE / "kcl_stack" /
+                           f"{target}_{proposal}_src{sid}.png")
+            for j in src_dir.glob("naclkcl_stack.png"):
+                make_link(j,
+                           BYTYPE / "naclkcl_stack" /
+                           f"{target}_{proposal}_src{sid}.png")
+            for j in src_dir.glob("naclkcl_combined_stack.png"):
+                make_link(j,
+                           BYTYPE / "naclkcl_combined_stack" /
+                           f"{target}_{proposal}_src{sid}.png")
             for gst in src_dir.glob("spectrum_per_group_stack.png"):
                 make_link(gst,
                            BYTYPE / "spectrum_per_group_stack" /

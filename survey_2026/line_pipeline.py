@@ -464,39 +464,123 @@ def plot_per_group_stack(sid, sdir, rows, lines_by_name, vlsr_kms):
     plt.close(fig)
 
 
+def _plot_one_stack(ax, d, title):
+    """Single-panel stack drawing with included-line label list."""
+    ax.plot(d["vaxis"], d["spec"], "k-", drawstyle="steps-mid", lw=1)
+    ax.axhline(0, color="grey", lw=0.5)
+    ax.axhline(d["sigma"], color="red", lw=0.5, ls=":",
+                label=f"1σ={d['sigma']:.2g}")
+    ax.axhline(-d["sigma"], color="red", lw=0.5, ls=":")
+    ax.axhline(3 * d["sigma"], color="red", lw=0.5, ls="--",
+                 label=f"3σ={3*d['sigma']:.2g}")
+    ax.axvline(0, color="blue", lw=0.5, ls="--", label="v_lsr")
+    n = len(d.get("lines_used", []))
+    ax.set_ylabel(f"{title} stack\n(N={n}, T_K)")
+    # Annotate the line names actually included in the stack
+    if "lines_used" in d and d["lines_used"]:
+        # Wrap the line list at every 5 entries
+        lines_used = list(d["lines_used"])
+        chunks = [", ".join(lines_used[i:i+5]) for i in range(0, len(lines_used), 5)]
+        ax.text(0.01, 0.98, "lines stacked:\n" + "\n".join(chunks),
+                 transform=ax.transAxes, ha="left", va="top", fontsize=7,
+                 color="navy",
+                 bbox=dict(facecolor="white", alpha=0.7, edgecolor="none",
+                            pad=2))
+    ax.legend(loc="upper right", fontsize=7)
+
+
 def plot_salt_stack(stacks, sdir, sid):
-    if not stacks: return
-    fig, axs = plt.subplots(len(stacks), 1, figsize=(10, 3*len(stacks)), sharex=True)
-    if len(stacks) == 1: axs = [axs]
-    for ax, (species, d) in zip(axs, stacks.items()):
-        ax.plot(d["vaxis"], d["spec"], "k-", drawstyle="steps-mid", lw=1)
-        ax.axhline(0, color="grey", lw=0.5)
-        ax.axhline(d["sigma"], color="red", lw=0.5, ls=":", label=f"1σ={d['sigma']:.2g}")
-        ax.axhline(-d["sigma"], color="red", lw=0.5, ls=":")
-        ax.axhline(3*d["sigma"], color="red", lw=0.5, ls="--")
-        ax.axvline(0, color="blue", lw=0.5, ls="--", label="v_lsr")
-        ax.set_ylabel(f"{species} stack (N={d['n_lines']})")
-        ax.legend(loc="best", fontsize=8)
-    axs[-1].set_xlabel("v - v_lsr (km/s)")
-    fig.suptitle(f"Source {sid}: salt stacked spectra")
-    fig.tight_layout()
-    fig.savefig(sdir / f"salt_stack.png", dpi=130, bbox_inches="tight")
-    plt.close(fig)
+    """Write three stack PNGs (when populated):
+
+      nacl_stack.png      : single-panel NaCl-v0/v1/v2-35Cl
+      kcl_stack.png       : single-panel KCl-v0/v1/v2-35Cl
+      naclkcl_stack.png   : two-panel joint NaCl + KCl
+
+    Each panel labels the line names used in the stack.
+    """
+    if not stacks:
+        return
+    # NaCl-only
+    if "NaCl" in stacks:
+        fig, ax = plt.subplots(figsize=(10, 3))
+        _plot_one_stack(ax, stacks["NaCl"], "NaCl 35Cl v=0/1/2")
+        ax.set_xlabel("v - v_lsr (km/s)")
+        fig.suptitle(f"Source {sid}: NaCl stacked spectrum")
+        fig.tight_layout()
+        fig.savefig(sdir / "nacl_stack.png", dpi=130, bbox_inches="tight")
+        plt.close(fig)
+    # KCl-only
+    if "KCl" in stacks:
+        fig, ax = plt.subplots(figsize=(10, 3))
+        _plot_one_stack(ax, stacks["KCl"], "KCl 35Cl v=0/1/2")
+        ax.set_xlabel("v - v_lsr (km/s)")
+        fig.suptitle(f"Source {sid}: KCl stacked spectrum")
+        fig.tight_layout()
+        fig.savefig(sdir / "kcl_stack.png", dpi=130, bbox_inches="tight")
+        plt.close(fig)
+    # Joint NaCl + KCl: two-panel
+    species_present = [s for s in ("NaCl", "KCl") if s in stacks]
+    if len(species_present) >= 1:
+        fig, axs = plt.subplots(len(species_present), 1,
+                                  figsize=(10, 3 * len(species_present)),
+                                  sharex=True)
+        if len(species_present) == 1:
+            axs = [axs]
+        for ax, sp in zip(axs, species_present):
+            _plot_one_stack(ax, stacks[sp], f"{sp} 35Cl v=0/1/2")
+        axs[-1].set_xlabel("v - v_lsr (km/s)")
+        fig.suptitle(f"Source {sid}: joint NaCl+KCl stacked spectra")
+        fig.tight_layout()
+        fig.savefig(sdir / "naclkcl_stack.png", dpi=130, bbox_inches="tight")
+        plt.close(fig)
+    # Also build the JOINT NaCl+KCl single-stack: concat all lines
+    if "NaCl" in stacks and "KCl" in stacks:
+        # Combine into one stack via inverse-variance weighting
+        d1, d2 = stacks["NaCl"], stacks["KCl"]
+        w1 = 1.0 / d1["sigma"] ** 2
+        w2 = 1.0 / d2["sigma"] ** 2
+        # Same v-grid is assumed (it is in stack_salt)
+        combined = (d1["spec"] * w1 + d2["spec"] * w2) / (w1 + w2)
+        sigma_c = 1.0 / np.sqrt(w1 + w2)
+        n_c = len(d1.get("lines_used", [])) + len(d2.get("lines_used", []))
+        lines_c = list(d1.get("lines_used", [])) + list(d2.get("lines_used", []))
+        d_c = dict(vaxis=d1["vaxis"], spec=combined, sigma=sigma_c,
+                    n_lines=n_c, lines_used=lines_c)
+        fig, ax = plt.subplots(figsize=(10, 3))
+        _plot_one_stack(ax, d_c, "NaCl+KCl 35Cl v=0/1/2 combined")
+        ax.set_xlabel("v - v_lsr (km/s)")
+        fig.suptitle(f"Source {sid}: joint NaCl+KCl 35Cl-v=0/1/2 stacked spectrum")
+        fig.tight_layout()
+        fig.savefig(sdir / "naclkcl_combined_stack.png", dpi=130,
+                     bbox_inches="tight")
+        plt.close(fig)
+        np.savez(sdir / "naclkcl_combined_stack.npz",
+                  vaxis=d_c["vaxis"], spec=d_c["spec"],
+                  sigma=d_c["sigma"], n_lines=d_c["n_lines"])
 
 
 # ----- Stacking -----
 def stack_salt(rows, sdir, vlsr_kms):
+    """Stack the 35Cl isotopologue v=0/1/2 lines (the common, brightest set)
+    for NaCl and KCl. Excludes 37Cl/41K/v>=3 lines so the stacks compare
+    apples to apples across sources.
+
+    Returns dict {species: {vaxis, spec, sigma, n_lines, lines_used}}."""
+    import re as _re
     out = {}
+    isotop_re = _re.compile(r"^(NaCl|KCl)_v[012]_")
     for species in ("NaCl", "KCl"):
         sub = [r for r in rows if r.get("group") == species and r.get("in_band")
-               and "peak_Kkms_or_unit" in r]
+               and "peak_Kkms_or_unit" in r
+               and isotop_re.match(str(r.get("line", "")))]
         if len(sub) < 2:
             continue
-        stacks, sigmas = [], []
+        stacks, sigmas, used = [], [], []
         v_grid = np.arange(-VWIN_KMS, VWIN_KMS + 0.5, 1.0)
         for r in sub:
             sf = sdir / f"{r['line']}.spec.npz"
-            if not sf.exists(): continue
+            if not sf.exists():
+                continue
             arr = np.load(sf)
             v_shift = arr["vaxis"] - vlsr_kms
             order = np.argsort(v_shift)
@@ -504,19 +588,23 @@ def stack_salt(rows, sdir, vlsr_kms):
                                 left=np.nan, right=np.nan)
             if not np.isfinite(interp).any():
                 continue
-            stacks.append(interp); sigmas.append(float(arr["sigma"]))
+            stacks.append(interp)
+            sigmas.append(float(arr["sigma"]))
+            used.append(str(r["line"]))
         if len(stacks) < 2:
             continue
-        weights = 1.0 / np.array(sigmas)**2
+        weights = 1.0 / np.array(sigmas) ** 2
         stack = np.nansum(np.array(stacks) * weights[:, None], axis=0) / np.nansum(weights)
         sigma_stack = 1.0 / np.sqrt(np.nansum(weights))
-        # Reject degenerate stack (all zero or all NaN — means interpolation failed)
         finite_nonzero = np.isfinite(stack) & (stack != 0)
         if finite_nonzero.sum() < 5 or np.nanstd(stack) == 0:
-            print(f"  ! {species} stack degenerate (all-zero/NaN); not saving")
+            print(f"  ! {species} stack degenerate; not saving")
             continue
-        out[species] = dict(vaxis=v_grid, spec=stack, sigma=sigma_stack, n_lines=len(stacks))
-        np.savez(sdir / f"{species}_stack.npz", **out[species])
+        out[species] = dict(vaxis=v_grid, spec=stack, sigma=sigma_stack,
+                              n_lines=len(stacks), lines_used=used)
+        np.savez(sdir / f"{species}_stack.npz",
+                  vaxis=v_grid, spec=stack, sigma=sigma_stack,
+                  n_lines=len(stacks), lines_used=np.array(used))
     return out
 
 

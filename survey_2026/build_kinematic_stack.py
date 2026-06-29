@@ -175,7 +175,12 @@ def main():
     ap.add_argument("--proposal", required=True)
     ap.add_argument("--guide-line", required=True,
                      help="One of 'H26alpha', 'H30alpha', 'NaCl_v0_J18-17', "
-                          "or 'auto' (= brightest line in measurements).")
+                          "or 'auto' (= brightest line in measurements). "
+                          "Used as the output filename; can be any string when "
+                          "combined with --guide-rest-GHz.")
+    ap.add_argument("--guide-rest-GHz", type=float, default=None,
+                     help="Explicit rest frequency (GHz) for the guide line; "
+                          "overrides LINELIST/RRLS/line_measurements lookup.")
     ap.add_argument("--vlsr", type=float, required=True)
     ap.add_argument("--source-id", type=int, default=None,
                      help="If omitted, uses brightest mm continuum source.")
@@ -200,8 +205,11 @@ def main():
         raise SystemExit(f"no cubes for {args.target}/{args.proposal}")
 
     # Resolve guide line rest freq
-    guide_rest = None
-    if args.guide_line in RRLS:
+    if getattr(args, "guide_rest_GHz", None) is not None:
+        guide_rest = float(args.guide_rest_GHz)
+    else:
+        guide_rest = None
+    if guide_rest is None and args.guide_line in RRLS:
         guide_rest = RRLS[args.guide_line]
     if guide_rest is None:
         rest_lookup = {l[1].split()[0]: l[0] for l in LINELIST}

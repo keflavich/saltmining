@@ -174,10 +174,11 @@ def main():
 
     # Build LaTeX deluxetable
     lines = [
+        r"\begin{longrotatetable}",
         r"\begin{deluxetable*}{llcccccccc}",
         r"\tabletypesize{\scriptsize}",
-        r"\tablecaption{Multi-survey cross-match for the demography_2026 "
-        r"L$\,{\geq}\,10^4$\,$L_\odot$, $d \leq 2$\,kpc target sample. "
+        r"\tablecaption{Multi-survey cross-match for the demography\_2026 "
+        r"$L \geq 10^4 \, L_\odot$, $d \leq 2$\,kpc target sample. "
         r"Distances and bolometric luminosities are from the RMS catalog "
         r"\citep{Lumsden+13,Urquhart+18}, except where a more recent reference "
         r"is given in Table~\ref{tab:targets}. ALMA continuum quantities are "
@@ -228,6 +229,7 @@ def main():
         r"continuum was not analyzed locally (no entry in "
         r"\texttt{analysis\_products/}) the ALMA columns are \nodata.}",
         r"\end{deluxetable*}",
+        r"\end{longrotatetable}",
     ]
     OUT_TEX.write_text("\n".join(lines) + "\n")
     print(f"wrote {OUT_TEX}")

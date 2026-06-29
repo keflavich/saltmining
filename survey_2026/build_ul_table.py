@@ -110,7 +110,8 @@ def write_tex(df: pd.DataFrame):
     df = df.sort_values(["target", "proposal", "line"])
     lines = []
     lines.append(r"\startlongtable")
-    lines.append(r"\begin{deluxetable*}{llllrcc}")
+    lines.append(r"\begin{deluxetable}{llllrcc}")
+    lines.append(r"\tabletypesize{\scriptsize}")
     lines.append(r"\tablecaption{Upper limits on salt (NaCl, KCl) and water "
                  r"emission toward the brightest mm continuum source in each "
                  r"target field, per ALMA program. Detections ($\geq 5\sigma$) "
@@ -139,7 +140,7 @@ def write_tex(df: pd.DataFrame):
                  r"native channel width $\Delta v_\mathrm{chan}$ and after "
                  r"smoothing to a $10$\,\kms\ channel. Smoothing reduces the "
                  r"noise by $\sqrt{\Delta v_\mathrm{chan} / 10\,\mathrm{km\,s^{-1}}}$.}")
-    lines.append(r"\end{deluxetable*}")
+    lines.append(r"\end{deluxetable}")
     OUT_TEX.write_text("\n".join(lines) + "\n")
 
 

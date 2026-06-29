@@ -254,7 +254,7 @@ def main():
             f"{r['d']:.2f} & {r['dref']} & "
             f"{r['lbol']/1e4:.2f} & {r['lref']} & "
             f"{r['v_lsr']} & {r['vref']} & "
-            f"{n_alma if n_alma > 0 else r'\\nodata'} \\\\"
+            f"{n_alma if n_alma > 0 else r'\nodata'} \\\\"
         )
     lines.append(r"\enddata")
     # Numbered citet references
@@ -280,21 +280,43 @@ def main():
     # Companion proposals table — one line per proposal-code per target
     lines.append(r"")
     lines.append(r"\startlongtable")
-    lines.append(r"\begin{deluxetable}{lp{3.5in}}")
+    lines.append(r"\begin{deluxetable*}{lp{4.5in}}")
     lines.append(r"\tabletypesize{\scriptsize}")
     lines.append(r"\tablecaption{ALMA proposal codes (resolution finer than "
                  r"500\,AU at the source distance) per target.\label{tab:targets_alma}}")
     lines.append(r"\tablehead{\colhead{Source} & "
                  r"\colhead{ALMA proposal codes}}")
     lines.append(r"\startdata")
-    for r in rows:
-        if not r["codes"]:
-            lines.append(f"{r['name']} & \\nodata \\\\")
-        else:
-            codes_str = ", ".join(r["codes"])
-            lines.append(f"{r['name']} & {codes_str} \\\\")
+    rows_with_codes = [r for r in rows if r["codes"]]
+    rows_no_codes = [r for r in rows if not r["codes"]]
+    for r in rows_with_codes:
+        codes_str = ", ".join(r["codes"])
+        lines.append(f"{r['name']} & {codes_str} \\\\")
     lines.append(r"\enddata")
-    lines.append(r"\end{deluxetable}")
+    lines.append(r"\end{deluxetable*}")
+
+    # Separate table listing sources with no <500-AU ALMA data
+    if rows_no_codes:
+        lines.append(r"")
+        lines.append(r"\startlongtable")
+        lines.append(r"\begin{deluxetable}{lcccc}")
+        lines.append(r"\tabletypesize{\scriptsize}")
+        lines.append(r"\tablecaption{Sample sources with no ALMA observations "
+                     r"reaching $<500$\,AU resolution at the source distance. "
+                     r"These targets are excluded from the salt-search analysis "
+                     r"but listed here for completeness.\label{tab:targets_noalma}}")
+        lines.append(r"\tablehead{\colhead{Source} & \colhead{R.A.} & "
+                     r"\colhead{Dec.} & \colhead{$d$} & "
+                     r"\colhead{$L_\mathrm{bol}$} \\")
+        lines.append(r"& (J2000) & (J2000) & (kpc) & ($10^4\,L_\odot$) }")
+        lines.append(r"\startdata")
+        for r in rows_no_codes:
+            lines.append(
+                f"{r['name']} & {r['ra']} & {r['dec']} & "
+                f"{r['d']:.2f} & {r['lbol']/1e4:.2f} \\\\"
+            )
+        lines.append(r"\enddata")
+        lines.append(r"\end{deluxetable}")
 
     OUT.write_text("\n".join(lines) + "\n")
     print(f"\nwrote {OUT}")

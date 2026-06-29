@@ -35,9 +35,20 @@ LUM_REF_BY_ORIGIN = {
 SPECIAL_DIST_REF = {
     "OrionSrcI":           r"\citet{Menten2007}",
     "Orion_SrcI":          r"\citet{Menten2007}",
+    "Orion-SrcI":          r"\citet{Menten2007}",
+    "Orion-BN":            r"\citet{Menten2007}",
+    "OrionBN":             r"\citet{Menten2007}",
+    "OrionB-Flame":        r"\citet{Kounkel2017}",
+    "S140-IRS1":           r"\citet{Hirota2008}",
     "NGC6334I":            r"\citet{Chibueze2014}",
     "NGC6334IN":           r"\citet{Chibueze2014}",
+    "IRAS17233-3606":      r"\citet{Chibueze2014}",
     "MonR2-IRS3":          r"\citet{Herbst1976}",
+    "MonR2-IRS2":          r"\citet{Herbst1976}",
+    "GGD12-15":            r"\citet{Gomez2002}",
+    "NGC6514":             r"\citet{Kuhn2019}",
+    "Lagoon-Her36":        r"\citet{Damiani2019}",
+    "G353.2+0.9":          r"\citet{Kuhn2019}",
     "G268.4222-00.8490":   r"\citet{Getman2019}",
     "G010.8411-02.5919":   r"\citet{Zucker2020}",
     "G081.6802+00.5405B":  r"\citet{Rygl2012}",
@@ -49,11 +60,22 @@ SPECIAL_DIST_REF = {
     "G345.5043+00.3480":   r"\citet{Urquhart2018}",
 }
 SPECIAL_LUM_REF = {
-    "OrionSrcI":          r"\citet{Reid2007}",
-    "Orion_SrcI":         r"\citet{Reid2007}",
+    "OrionSrcI":          r"\citet{Testi2010}",
+    "Orion_SrcI":         r"\citet{Testi2010}",
+    "Orion-SrcI":         r"\citet{Testi2010}",
+    "Orion-BN":           r"\citet{Gezari1998}",
+    "OrionBN":            r"\citet{Gezari1998}",
+    "OrionB-Flame":       r"\citet{Bik2003}",
+    "S140-IRS1":          r"\citet{Maud2013}",
     "NGC6334I":           r"\citet{Sandell2000}",
     "NGC6334IN":          r"\citet{Sandell2000}",
+    "IRAS17233-3606":     r"\citet{Leurini2008}",
     "MonR2-IRS3":         r"\citet{Henning1992}",
+    "MonR2-IRS2":         r"\citet{Henning1992}",
+    "GGD12-15":           r"\citet{Gomez2002}",
+    "NGC6514":            r"\citet{Rho2006}",
+    "Lagoon-Her36":       r"\citet{Goto2006,Arias2010}",
+    "G353.2+0.9":         r"\citet{Giannetti2012}",
     "G268.4222-00.8490":  r"\citet{Getman2019}",
 }
 
@@ -93,17 +115,19 @@ def query_alma_lt500au(coord, dist_kpc, radius=15 * u.arcsec):
 
 
 def fmt_coord(ra_deg, dec_deg):
-    """Return compact (ra, dec) strings with no internal whitespace."""
+    """Return a single merged J2000 coord string `HH:MM:SS.s±DD:MM:SS` with
+    colons but no whitespace between RA and Dec (Dec sign separates them)."""
     c = ac.SkyCoord(ra_deg * u.deg, dec_deg * u.deg)
-    ra = c.ra.to_string(unit=u.hourangle, sep="", pad=True, precision=1)
-    dec = c.dec.to_string(unit=u.deg, sep="", pad=True, precision=0, alwayssign=True)
-    return ra, dec
+    ra = c.ra.to_string(unit=u.hourangle, sep=":", pad=True, precision=1)
+    dec = c.dec.to_string(unit=u.deg, sep=":", pad=True, precision=0, alwayssign=True)
+    return f"{ra}{dec}"
 
 
 def fmt_galactic(glon, glat):
-    """Compact Gxxx.xxxx{+|-}xx.xxxx form."""
+    """Compact Gxxx.xxxx{+|-}xx.xxxx wrapped in \\texttt{} so the +/- glyphs
+    align in a fixed-width font."""
     s = "+" if glat >= 0 else "-"
-    return f"G{float(glon):08.4f}{s}{abs(float(glat)):07.4f}"
+    return rf"\texttt{{G{float(glon):08.4f}{s}{abs(float(glat)):07.4f}}}"
 
 
 def fmt_distance(d_kpc):
@@ -259,7 +283,7 @@ def main():
         print(f"[{i}/{len(src)}] {r.name} d={r.dist_kpc:.2f} kpc ...", flush=True)
         per_code, best_res_au, n_obs_total = query_alma_lt500au(coord, r.dist_kpc)
         codes = [c for c, _ in per_code]
-        ra, dec = fmt_coord(r.ra_deg, r.dec_deg)
+        coord = fmt_coord(r.ra_deg, r.dec_deg)
         common = common_name_for(r)
         gname = fmt_galactic(r.glon, r.glat)
         d_str = fmt_distance(r.dist_kpc)
@@ -316,7 +340,7 @@ def main():
             name=r.name.replace("_", r"\_"),
             common=common.replace("_", r"\_"),
             gname=gname,
-            ra=ra, dec=dec,
+            coord=coord,
             d=r.dist_kpc, d_str=d_str, lbol=r.lbol_lsun,
             dref=dref_n, lref=lref_n,
             v_lsr=v_str, vref=vref_n,
@@ -334,23 +358,23 @@ def main():
     # Compact portrait version of the targets table. Common name + Galactic
     # coord drive identification; J2000 RA/Dec are space-stripped to fit.
     lines.append(r"\startlongtable")
-    lines.append(r"\begin{deluxetable}{lllllccccc}")
+    lines.append(r"\begin{deluxetable}{lllcccccc}")
     lines.append(r"\tabletypesize{\scriptsize}")
     lines.append(r"\tablecaption{Target source list. ALMA project codes are listed when "
                  r"the corresponding observations achieved a spatial resolution finer than "
                  r"500\,AU at the source distance.\label{tab:targets}}")
     lines.append(r"\tablehead{")
     lines.append(r"\colhead{Source} & \colhead{Galactic} & "
-                 r"\colhead{R.A.} & \colhead{Dec.} & "
+                 r"\colhead{R.A.\,Dec.} & "
                  r"\colhead{$d$} & \colhead{$d^{*}$} & "
                  r"\colhead{$L_\mathrm{bol}$} & \colhead{$L^{*}$} & "
                  r"\colhead{$v_\mathrm{LSR}$} & \colhead{$v^{*}$} \\")
-    lines.append(r"& (l\,b) & (J2000) & (J2000) & (kpc) & ref. & "
+    lines.append(r"& (l\,b) & (J2000) & (kpc) & ref. & "
                  r"($10^4\,L_\odot$) & ref. & (km\,s$^{-1}$) & ref.}")
     lines.append(r"\startdata")
     for r in rows:
         lines.append(
-            f"{r['common']} & {r['gname']} & {r['ra']} & {r['dec']} & "
+            f"{r['common']} & {r['gname']} & \\texttt{{{r['coord']}}} & "
             f"{r['d_str']} & {r['dref']} & "
             f"{r['lbol']/1e4:.2f} & {r['lref']} & "
             f"{r['v_lsr']} & {r['vref']} \\\\"
@@ -405,17 +429,17 @@ def main():
     if rows_no_codes:
         lines.append(r"")
         lines.append(r"\startlongtable")
-        lines.append(r"\begin{deluxetable}{llccccl}")
+        lines.append(r"\begin{deluxetable}{lllccl}")
         lines.append(r"\tabletypesize{\scriptsize}")
         lines.append(r"\tablecaption{Sample sources with no ALMA observations "
                      r"reaching $<500$\,AU resolution at the source distance. "
                      r"These targets are excluded from the salt-search analysis "
                      r"but listed here for completeness.\label{tab:targets_noalma}}")
         lines.append(r"\tablehead{\colhead{Source} & \colhead{Galactic} & "
-                     r"\colhead{R.A.} & \colhead{Dec.} & "
+                     r"\colhead{R.A.\,Dec.} & "
                      r"\colhead{$d$} & \colhead{$L_\mathrm{bol}$} & "
                      r"\colhead{Reason} \\")
-        lines.append(r"& (l\,b) & (J2000) & (J2000) & (kpc) & "
+        lines.append(r"& (l\,b) & (J2000) & (kpc) & "
                      r"($10^4\,L_\odot$) & }")
         lines.append(r"\startdata")
         for r in rows_no_codes:
@@ -424,7 +448,7 @@ def main():
             else:
                 reason = f"best res {r['best_res_au']:.0f}\\,AU"
             lines.append(
-                f"{r['common']} & {r['gname']} & {r['ra']} & {r['dec']} & "
+                f"{r['common']} & {r['gname']} & \\texttt{{{r['coord']}}} & "
                 f"{r['d_str']} & {r['lbol']/1e4:.2f} & {reason} \\\\"
             )
         lines.append(r"\enddata")

@@ -111,21 +111,60 @@ def avg_spectrum_over_beam(cube_path, coord, n_half_pixels=2):
     return freq_Hz / 1e9, spec_jybeam * K
 
 
-def overlay_lineids_panel(ax, fmin, fmax, ymax):
-    """Simple vertical-line + small rotated text overlay.
+def overlay_lineids_panel(ax, fmin, fmax, ymax, det_lines=None):
+    """Vertical-line + small rotated text overlay for line identifications.
 
-    Filters to the salts + strong COMs + RRLs + common shock/HII tracers
-    (about 30 lines vs the full 161-line catalog) so the panel stays
-    readable. Labels are drawn rotated 90 deg above the spectrum range."""
+    Two layers:
+      - orange (C1): catalog lines from _KEEP_PATTERNS (search-list species)
+      - black:       additional lines detected at >=5 sigma at this source
+                     that are NOT already in the search list (likely
+                     contaminants / strong COMs / shock tracers in band).
+
+    det_lines: list of (name, obs_GHz) for detected lines at this src/proposal.
+    """
     keep = [(n, f) for n, f in LINE_REST_GHZ.items()
             if fmin <= f <= fmax and _line_is_important(n)]
-    if not keep:
-        return
     keep.sort(key=lambda kv: kv[1])
     for n, f in keep:
-        ax.axvline(f, color="C1", lw=0.4, alpha=0.55)
+        ax.axvline(f, color="C1", lw=0.5, alpha=0.6)
         ax.text(f, ymax * 0.97, n, rotation=90, ha="center", va="top",
-                 fontsize=5, color="C1", alpha=0.9, clip_on=True)
+                 fontsize=8, color="C1", alpha=0.95, clip_on=True)
+    if det_lines:
+        # Dedup: drop entries already represented in the orange layer
+        salt_freqs = set(round(f, 4) for _, f in keep)
+        extras = [(n, f) for n, f in det_lines
+                  if fmin <= f <= fmax and round(f, 4) not in salt_freqs
+                  and not _line_is_important(n)]
+        # Sort + de-collide
+        extras.sort(key=lambda kv: kv[1])
+        for n, f in extras:
+            ax.axvline(f, color="black", lw=0.5, alpha=0.6, linestyle="--")
+            ax.text(f, ymax * 0.55, n, rotation=90, ha="center", va="top",
+                     fontsize=8, color="black", alpha=0.9, clip_on=True)
+
+
+def load_detected_lines(target, proposal, src_id):
+    """Return list of (line_name, obs_GHz) for >=5sigma detections at this
+    (target, proposal, source). obs_GHz = rest_GHz Doppler-shifted by peak_v.
+    """
+    meas = ANALYSIS / target / proposal / "line_measurements.csv"
+    if not meas.exists():
+        return []
+    try:
+        df = pd.read_csv(meas)
+    except pd.errors.EmptyDataError:
+        return []
+    if df.empty or not {"source", "snr", "line", "rest_GHz", "peak_v"} <= set(df.columns):
+        return []
+    sub = df[(df["source"] == src_id) & (df["snr"] >= 5.0)]
+    out = []
+    C = 299792.458
+    for _, r in sub.iterrows():
+        rest = float(r["rest_GHz"])
+        pv = float(r.get("peak_v", 0.0)) if pd.notna(r.get("peak_v")) else 0.0
+        obs = rest * (1.0 - pv / C)
+        out.append((str(r["line"]), obs))
+    return out
 
 
 def mous_tag(cube_path):
@@ -178,18 +217,21 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
     # Sort: by MOUS then SPW so observations stay grouped
     panels.sort(key=lambda p: (p[0], p[2]))
 
+    det_lines = load_detected_lines(target, proposal, src_id)
+
     # Paginate
     n_pages = (len(panels) + rows_per_page - 1) // rows_per_page
     for pi in range(n_pages):
         page = panels[pi * rows_per_page:(pi + 1) * rows_per_page]
         n = len(page)
-        fig, axes = plt.subplots(n, 1, figsize=(18, 2.5 * n + 0.6))
+        # 2x larger panels for readability (was 18 x 2.5n at dpi=110).
+        fig, axes = plt.subplots(n, 1, figsize=(24, 4.0 * n + 0.8))
         if n == 1:
             axes = [axes]
         for ax, (mous, spw, _, freq, T) in zip(axes, page):
-            ax.plot(freq, T, "k-", lw=0.6)
-            ax.set_ylabel(f"{mous}\n{spw}\nT (K)", fontsize=7)
-            ax.tick_params(labelsize=8)
+            ax.plot(freq, T, "k-", lw=0.8)
+            ax.set_ylabel(f"{mous}\n{spw}\nT (K)", fontsize=11)
+            ax.tick_params(labelsize=11)
             ax.set_xlim(float(freq.min()), float(freq.max()))
             finite = T[np.isfinite(T)]
             if finite.size < 5:
@@ -199,15 +241,17 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
             if not (np.isfinite(ymin) and np.isfinite(ymax)) or ymax <= ymin:
                 continue
             ax.set_ylim(ymin, ymax)
-            overlay_lineids_panel(ax, float(freq.min()), float(freq.max()), ymax)
-        axes[-1].set_xlabel("observed frequency (GHz)")
+            overlay_lineids_panel(ax, float(freq.min()), float(freq.max()),
+                                    ymax, det_lines=det_lines)
+        axes[-1].set_xlabel("observed frequency (GHz)", fontsize=12)
         suffix = "" if n_pages == 1 else f"_p{pi+1}"
         fig.suptitle(
             f"{target} src{src_id:02d}  (proposal {proposal}"
-            f"{f', page {pi+1}/{n_pages}' if n_pages > 1 else ''})", fontsize=10)
+            f"{f', page {pi+1}/{n_pages}' if n_pages > 1 else ''})",
+            fontsize=14)
         fig.tight_layout(rect=[0, 0, 1, 0.97])
         out_png = target_dir / f"spectrum_panels_src{src_id:02d}{suffix}.png"
-        fig.savefig(out_png, dpi=110)
+        fig.savefig(out_png, dpi=180)
         plt.close(fig)
         print(f"  wrote {out_png} ({n} panels)")
 

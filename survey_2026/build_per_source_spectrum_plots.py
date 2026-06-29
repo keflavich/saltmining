@@ -13,6 +13,7 @@ For each analyzed (target, proposal, source_id) write:
 Lineid catalog source: /orange/adamginsburg/salt/Orion_ALMA_2016.1.00165.S/analysis/lines.py
   (disk_lines + absorbers = 161 entries spanning B3/B6/B7)
 """
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -35,6 +36,20 @@ ANALYSIS = ROOT / "analysis_products"
 
 DISK_LINES = {**_lines.disk_lines, **_lines.absorbers}
 LINE_REST_GHZ = {n: float(u.Quantity(f).to(u.GHz).value) for n, f in DISK_LINES.items()}
+
+# Restricted subset used for the per-panel overlay: salts + the strongest
+# COMs + common shock/HII tracers in the band. Keeps the panels readable
+# (lineid_plot fails to lay out 60+ labels in a 12" panel).
+_KEEP_PATTERNS = ("NaCl", "KCl", "Na37Cl", "K37Cl", "H2O",
+                  "SiO", "29SiO", "SiS", "SO_", "SO2",
+                  "H30alpha", "H29alpha", "H26alpha", "H37beta", "H42alpha",
+                  "CO_2-1", "13CO", "C18O", "CO-18", "12CO",
+                  "CH3OH_", "CH3CN", "OCS", "HC3N", "H2CO303-202",
+                  "CH3OCHO", "HC(O)NH2")
+
+
+def _line_is_important(name):
+    return any(p in name for p in _KEEP_PATTERNS)
 
 
 def jy_per_beam_to_K(nu_GHz, bmaj_arcsec, bmin_arcsec):
@@ -97,28 +112,40 @@ def avg_spectrum_over_beam(cube_path, coord, n_half_pixels=2):
 
 
 def overlay_lineids_panel(ax, fmin, fmax, ymax):
+    """Simple vertical-line + small rotated text overlay.
+
+    Filters to the salts + strong COMs + RRLs + common shock/HII tracers
+    (about 30 lines vs the full 161-line catalog) so the panel stays
+    readable. Labels are drawn rotated 90 deg above the spectrum range."""
     keep = [(n, f) for n, f in LINE_REST_GHZ.items()
-            if fmin <= f <= fmax]
+            if fmin <= f <= fmax and _line_is_important(n)]
     if not keep:
         return
-    try:
-        from lineid_plot import plot_line_ids
-    except ImportError:
-        for _, f in keep:
-            ax.axvline(f, color="C1", lw=0.5, alpha=0.5)
-        return
     keep.sort(key=lambda kv: kv[1])
-    names = [n for n, _ in keep]
-    freqs = np.array([f for _, f in keep], dtype=float)
-    # Build a dummy 'data' for label placement matching y range
-    dummy_wave = np.linspace(fmin, fmax, 200)
-    dummy_flux = np.full(200, ymax)
-    plot_line_ids(dummy_wave, dummy_flux, freqs, names, ax=ax,
-                   label1_size=6, extend=False, max_iter=50)
+    for n, f in keep:
+        ax.axvline(f, color="C1", lw=0.4, alpha=0.55)
+        ax.text(f, ymax * 0.97, n, rotation=90, ha="center", va="top",
+                 fontsize=5, color="C1", alpha=0.9, clip_on=True)
 
 
-def plot_source(target, proposal, src_id):
-    """Make the N-panel SPW spectrum plot for one source."""
+def mous_tag(cube_path):
+    """Short MOUS id from filename: member.uid___A001_X1465_X2fd3.* -> X2fd3."""
+    stem = cube_path.stem
+    # Patterns: member.uid___A001_X<mous_top>_X<mous_id>.<targetname>_sci.spwNN...
+    parts = stem.split(".")
+    if parts and parts[0].startswith("member"):
+        # e.g. member.uid___A001_X1465_X2fd3 -> grab last X<id>
+        head = parts[0]
+        sub = head.split("_")
+        for tok in reversed(sub):
+            if tok.startswith("X") and len(tok) > 1:
+                return tok
+    return "obs"
+
+
+def plot_source(target, proposal, src_id, rows_per_page=8):
+    """Make N-panel SPW spectrum plot(s) for one source. One panel per
+    (MOUS, SPW) cube; paginate to keep at most rows_per_page rows per PNG."""
     target_dir = ANALYSIS / target / proposal
     coord = per_source_pixel(None, src_id, target, proposal)
     if coord is None:
@@ -140,36 +167,49 @@ def plot_source(target, proposal, src_id):
             continue
         spw = next((t for t in cube.stem.split(".") if t.startswith("spw")),
                     "spw??")
-        panels.append((spw, *out))
+        mous = mous_tag(cube)
+        # Sort key: SPW number for clean ordering
+        spw_num = int(re.sub(r"\D", "", spw)) if any(c.isdigit() for c in spw) else 99
+        panels.append((mous, spw, spw_num, *out))
     if not panels:
         print(f"  source off-FOV in all cubes ({target} src{src_id:02d})")
         return
 
-    n = len(panels)
-    fig, axes = plt.subplots(n, 1, figsize=(12, 1.6 * n + 0.6))
-    if n == 1:
-        axes = [axes]
-    for ax, (spw, freq, T) in zip(axes, panels):
-        ax.plot(freq, T, "k-", lw=0.6)
-        ax.set_ylabel(f"{spw}\nT (K)", fontsize=8)
-        ax.tick_params(labelsize=8)
-        ax.set_xlim(float(freq.min()), float(freq.max()))
-        finite = T[np.isfinite(T)]
-        if finite.size < 5:
-            continue
-        ymin = float(np.nanpercentile(finite, 1))
-        ymax = float(np.nanpercentile(finite, 99)) * 1.15 + 1
-        if not (np.isfinite(ymin) and np.isfinite(ymax)) or ymax <= ymin:
-            continue
-        ax.set_ylim(ymin, ymax)
-        overlay_lineids_panel(ax, float(freq.min()), float(freq.max()), ymax)
-    axes[-1].set_xlabel("rest frequency [observed] (GHz)")
-    fig.suptitle(f"{target} src{src_id:02d}  (proposal {proposal})", fontsize=10)
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    out_png = target_dir / f"spectrum_panels_src{src_id:02d}.png"
-    fig.savefig(out_png, dpi=110)
-    plt.close(fig)
-    print(f"  wrote {out_png}")
+    # Sort: by MOUS then SPW so observations stay grouped
+    panels.sort(key=lambda p: (p[0], p[2]))
+
+    # Paginate
+    n_pages = (len(panels) + rows_per_page - 1) // rows_per_page
+    for pi in range(n_pages):
+        page = panels[pi * rows_per_page:(pi + 1) * rows_per_page]
+        n = len(page)
+        fig, axes = plt.subplots(n, 1, figsize=(18, 2.5 * n + 0.6))
+        if n == 1:
+            axes = [axes]
+        for ax, (mous, spw, _, freq, T) in zip(axes, page):
+            ax.plot(freq, T, "k-", lw=0.6)
+            ax.set_ylabel(f"{mous}\n{spw}\nT (K)", fontsize=7)
+            ax.tick_params(labelsize=8)
+            ax.set_xlim(float(freq.min()), float(freq.max()))
+            finite = T[np.isfinite(T)]
+            if finite.size < 5:
+                continue
+            ymin = float(np.nanpercentile(finite, 1))
+            ymax = float(np.nanpercentile(finite, 99)) * 1.15 + 1
+            if not (np.isfinite(ymin) and np.isfinite(ymax)) or ymax <= ymin:
+                continue
+            ax.set_ylim(ymin, ymax)
+            overlay_lineids_panel(ax, float(freq.min()), float(freq.max()), ymax)
+        axes[-1].set_xlabel("observed frequency (GHz)")
+        suffix = "" if n_pages == 1 else f"_p{pi+1}"
+        fig.suptitle(
+            f"{target} src{src_id:02d}  (proposal {proposal}"
+            f"{f', page {pi+1}/{n_pages}' if n_pages > 1 else ''})", fontsize=10)
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+        out_png = target_dir / f"spectrum_panels_src{src_id:02d}{suffix}.png"
+        fig.savefig(out_png, dpi=110)
+        plt.close(fig)
+        print(f"  wrote {out_png} ({n} panels)")
 
 
 def main():

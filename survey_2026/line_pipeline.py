@@ -534,12 +534,11 @@ def plot_salt_stack(stacks, sdir, sid):
         fig.savefig(sdir / "naclkcl_stack.png", dpi=130, bbox_inches="tight")
         plt.close(fig)
     # Also build the JOINT NaCl+KCl single-stack: concat all lines
+    d_c = None
     if "NaCl" in stacks and "KCl" in stacks:
-        # Combine into one stack via inverse-variance weighting
         d1, d2 = stacks["NaCl"], stacks["KCl"]
         w1 = 1.0 / d1["sigma"] ** 2
         w2 = 1.0 / d2["sigma"] ** 2
-        # Same v-grid is assumed (it is in stack_salt)
         combined = (d1["spec"] * w1 + d2["spec"] * w2) / (w1 + w2)
         sigma_c = 1.0 / np.sqrt(w1 + w2)
         n_c = len(d1.get("lines_used", [])) + len(d2.get("lines_used", []))
@@ -557,6 +556,28 @@ def plot_salt_stack(stacks, sdir, sid):
         np.savez(sdir / "naclkcl_combined_stack.npz",
                   vaxis=d_c["vaxis"], spec=d_c["spec"],
                   sigma=d_c["sigma"], n_lines=d_c["n_lines"])
+
+    # 3-panel salt_stack.png: joint(NaCl+KCl) on top, then NaCl, then KCl.
+    # When only one species is present, render only the panels that have data.
+    panels_three = []
+    if d_c is not None:
+        panels_three.append((d_c, "NaCl+KCl combined"))
+    if "NaCl" in stacks:
+        panels_three.append((stacks["NaCl"], "NaCl 35Cl v=0/1/2"))
+    if "KCl" in stacks:
+        panels_three.append((stacks["KCl"], "KCl 35Cl v=0/1/2"))
+    if panels_three:
+        n = len(panels_three)
+        fig, axs = plt.subplots(n, 1, figsize=(10, 2.7 * n), sharex=True)
+        if n == 1:
+            axs = [axs]
+        for ax, (d, title) in zip(axs, panels_three):
+            _plot_one_stack(ax, d, title)
+        axs[-1].set_xlabel("v - v_lsr (km/s)")
+        fig.suptitle(f"Source {sid}: salt stacked spectra")
+        fig.tight_layout()
+        fig.savefig(sdir / "salt_stack.png", dpi=130, bbox_inches="tight")
+        plt.close(fig)
 
 
 # ----- Stacking -----

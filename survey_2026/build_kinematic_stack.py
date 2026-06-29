@@ -235,8 +235,8 @@ def main():
         mom1_g = args.vlsr
     print(f"guide mom1 at source pixel: {mom1_g:.2f} km/s")
 
-    # Extract aligned spectra from every cube
-    all_freq, all_T = [], []
+    # Extract aligned spectra from every cube; keep per-cube so we can panel
+    panels = []  # list of dicts {mous, spw, freq_rest, T_K}
     for cube in cubes:
         h = fits.getheader(cube)
         wcs = WCS(h).celestial
@@ -245,46 +245,83 @@ def main():
         if not (0 <= ix < h["NAXIS1"] and 0 <= iy < h["NAXIS2"]):
             print(f"  skip {cube.name}: source off-FOV")
             continue
-        # Each cube uses the same shift (mom1_g) — the kinematic offset is a
-        # global property of the disk emission. For purely shifted lines
-        # extracted in observed frame: f_rest = f_obs / (1 - v_obs/c).
         out = extract_aligned_spectrum(cube, (ix, iy), mom1_g)
         if out is None:
             continue
         f_rest, T = out
-        all_freq.append(f_rest); all_T.append(T)
+        # MOUS + SPW tag for panel labeling
+        stem = cube.stem
+        spw = next((t for t in stem.split(".") if t.startswith("spw")),
+                    "spw??")
+        mous = "obs"
+        if stem.startswith("member"):
+            for tok in reversed(stem.split(".")[0].split("_")):
+                if tok.startswith("X") and len(tok) > 1:
+                    mous = tok; break
+        panels.append(dict(mous=mous, spw=spw, freq=f_rest, T=T,
+                              name=cube.name))
         print(f"  {cube.name}: nu_rest={f_rest.min():.3f}-{f_rest.max():.3f} GHz "
               f"T_max={np.nanmax(T):.1f} K")
 
-    if not all_freq:
+    if not panels:
         raise SystemExit("no spectra extracted")
-
-    # Concatenate, sort
-    f_arr = np.concatenate(all_freq); T_arr = np.concatenate(all_T)
-    order = np.argsort(f_arr)
-    f_arr = f_arr[order]; T_arr = T_arr[order]
 
     out_dir = ROOT / "analysis_products" / args.target / args.proposal / "kinematic_stack"
     out_dir.mkdir(exist_ok=True)
+    # Save concatenated + per-panel data for downstream use
+    f_arr = np.concatenate([p["freq"] for p in panels])
+    T_arr = np.concatenate([p["T"] for p in panels])
+    order = np.argsort(f_arr)
+    f_arr = f_arr[order]; T_arr = T_arr[order]
     np.savez(out_dir / f"aligned_by_{args.guide_line}.npz",
               freq_GHz=f_arr, T_K=T_arr,
               guide_line=args.guide_line, guide_rest_GHz=guide_rest,
               mom1_kms=mom1_g)
     print(f"wrote {out_dir}/aligned_by_{args.guide_line}.npz")
 
-    # Plot
-    fig, ax = plt.subplots(figsize=(14, 4))
-    ax.plot(f_arr, T_arr, "k-", lw=0.6)
-    ax.set_xlabel("rest frequency (GHz)")
-    ax.set_ylabel("T (K)")
-    ax.set_title(f"{args.target} src{bid:02d} aligned by {args.guide_line} "
-                  f"(mom1={mom1_g:.1f} km/s, src vlsr={args.vlsr})")
-    overlay_lineids(ax, f_arr, T_arr)
-    fig.tight_layout()
-    out_png = out_dir / f"aligned_by_{args.guide_line}.png"
-    fig.savefig(out_png, dpi=120)
-    plt.close(fig)
-    print(f"wrote {out_png}")
+    # Sort panels by MOUS then SPW number for clean ordering
+    def _spw_num(s):
+        import re as _re
+        m = _re.search(r"(\d+)", s)
+        return int(m.group(1)) if m else 99
+    panels.sort(key=lambda p: (p["mous"], _spw_num(p["spw"])))
+
+    # Paginate at most ROWS_PER_PAGE rows per PNG
+    ROWS_PER_PAGE = 8
+    n_pages = (len(panels) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE
+    for pi in range(n_pages):
+        page = panels[pi * ROWS_PER_PAGE:(pi + 1) * ROWS_PER_PAGE]
+        n = len(page)
+        fig, axes = plt.subplots(n, 1, figsize=(18, 2.5 * n + 0.6))
+        if n == 1:
+            axes = [axes]
+        for ax, p in zip(axes, page):
+            freq = p["freq"]; T = p["T"]
+            ax.plot(freq, T, "k-", lw=0.6)
+            ax.set_ylabel(f"{p['mous']}\n{p['spw']}\nT (K)", fontsize=7)
+            ax.tick_params(labelsize=8)
+            ax.set_xlim(float(freq.min()), float(freq.max()))
+            finite = T[np.isfinite(T)]
+            if finite.size < 5:
+                continue
+            ymin = float(np.nanpercentile(finite, 1))
+            ymax = float(np.nanpercentile(finite, 99)) * 1.15 + 1
+            if not (np.isfinite(ymin) and np.isfinite(ymax)) or ymax <= ymin:
+                continue
+            ax.set_ylim(ymin, ymax)
+            overlay_lineids(ax, freq, T)
+        axes[-1].set_xlabel("rest frequency (GHz, aligned)")
+        suffix = "" if n_pages == 1 else f"_p{pi+1}"
+        fig.suptitle(
+            f"{args.target} src{bid:02d} aligned by {args.guide_line}  "
+            f"(mom1={mom1_g:.1f} km/s, vlsr={args.vlsr:+.1f}"
+            f"{f', page {pi+1}/{n_pages}' if n_pages > 1 else ''})",
+            fontsize=10)
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+        out_png = out_dir / f"aligned_by_{args.guide_line}{suffix}.png"
+        fig.savefig(out_png, dpi=120, bbox_inches="tight")
+        plt.close(fig)
+        print(f"wrote {out_png} ({n} panels)")
 
 
 if __name__ == "__main__":

@@ -64,5 +64,15 @@
     "reference": "IRAS 18151-1208 6.7 GHz methanol (MMB Caswell+2010)",
     "notes": "IRAS 18151-1208/G018.34+01.77 hot core",
     "method": "literature"
+  },
+  "MonR2-IRS3": {
+    "v_LSR_kms": 10.0,
+    "reference": "Choi 2001, ApJ 553, 219 (Mon R2 NH3/HCO+ ~ +10 km/s)",
+    "notes": "MonR2 systemic v_LSR ~ +10 km/s. Disk shows double-peak signature.",
+    "method": "literature"
+  },
+  "MonR2-IRS2": {
+    "v_LSR_kms": 10.0,
+    "reference": "Choi 2001 ApJ 553 219 (Mon R2 NH3/HCO+ ~+10 km/s)"
   }
 }

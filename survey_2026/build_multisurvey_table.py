@@ -174,7 +174,7 @@ def main():
 
     # Build LaTeX deluxetable
     lines = [
-        r"\begin{longrotatetable}",
+        r"\startlongtable",
         r"\begin{deluxetable*}{llcccccccc}",
         r"\tabletypesize{\scriptsize}",
         r"\tablecaption{Multi-survey cross-match for the demography\_2026 "
@@ -229,7 +229,6 @@ def main():
         r"continuum was not analyzed locally (no entry in "
         r"\texttt{analysis\_products/}) the ALMA columns are \nodata.}",
         r"\end{deluxetable*}",
-        r"\end{longrotatetable}",
     ]
     OUT_TEX.write_text("\n".join(lines) + "\n")
     print(f"wrote {OUT_TEX}")

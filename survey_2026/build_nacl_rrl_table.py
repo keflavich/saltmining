@@ -204,7 +204,7 @@ def fmt_line(line):
 def write_tex(df: pd.DataFrame):
     df = df.sort_values(["target", "proposal", "line"])
     out = []
-    out.append(r"\begin{longrotatetable}")
+    out.append(r"\startlongtable")
     out.append(r"\begin{deluxetable*}{lllcccccc}")
     out.append(r"\rotate")
     out.append(r"\tablecaption{NaCl and radio recombination-line (RRL) detections and "
@@ -247,7 +247,6 @@ def write_tex(df: pd.DataFrame):
                r"When $\theta_\mathrm{nat} \geq 300$\,AU the native value is reported in the "
                r"$300$\,AU column.}")
     out.append(r"\end{deluxetable*}")
-    out.append(r"\end{longrotatetable}")
     OUT_TEX.write_text("\n".join(out) + "\n")
 
 

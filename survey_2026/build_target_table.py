@@ -145,6 +145,23 @@ def main():
     vlsr_lookup = load_vlsr_sources()
     rows = []
     footnotes = {}  # marker -> footnote text
+
+    # Numbered \citet footnote ledger: any \citet{...} inside a table cell
+    # gets replaced with a [N] superscript number; the actual \citet command
+    # goes into a \tablenotetext at the bottom of the table.
+    citet_map = {}  # citet text -> numeric tag
+
+    def citet_to_num(text):
+        """Replace every \citet{...} in `text` with a [N] superscript;
+        register the citet command in citet_map / footnotes."""
+        import re as _re
+        def repl(m):
+            cmd = m.group(0)  # \citet{...}
+            if cmd not in citet_map:
+                n = len(citet_map) + 1
+                citet_map[cmd] = n
+            return rf"$^{{[{citet_map[cmd]}]}}$"
+        return _re.sub(r"\\citet\{[^}]+\}", repl, text)
     for i, r in enumerate(src.itertuples(), 1):
         coord = ac.SkyCoord(r.ra_deg * u.deg, r.dec_deg * u.deg)
         print(f"[{i}/{len(src)}] {r.name} d={r.dist_kpc:.2f} kpc ...", flush=True)
@@ -195,12 +212,16 @@ def main():
             else:
                 v_str = f"{v:+.1f}"
                 vref = vrec.get("ref", "RMS")
+        # Convert any \citet{} in references to numbered footnotes
+        dref_n = citet_to_num(dref)
+        lref_n = citet_to_num(lref)
+        vref_n = citet_to_num(vref)
         rows.append(dict(
             name=r.name.replace("_", r"\_"),
             ra=ra, dec=dec,
             d=r.dist_kpc, lbol=r.lbol_lsun,
-            dref=dref, lref=lref,
-            v_lsr=v_str, vref=vref,
+            dref=dref_n, lref=lref_n,
+            v_lsr=v_str, vref=vref_n,
             codes=codes,
         ))
 
@@ -209,32 +230,39 @@ def main():
     )
 
     lines = []
-    lines.append(r"\begin{longrotatetable}")
-    lines.append(r"\begin{deluxetable*}{lcccccccccp{1.4in}}")
+    # Compact portrait version of the targets table. ALMA proposals are
+    # moved to a separate table; this one lists meta + vLSR only.
+    lines.append(r"\startlongtable")
+    lines.append(r"\begin{deluxetable}{lccccccccc}")
     lines.append(r"\tabletypesize{\scriptsize}")
     lines.append(r"\tablecaption{Target source list. ALMA project codes are listed when "
                  r"the corresponding observations achieved a spatial resolution finer than "
                  r"500\,AU at the source distance.\label{tab:targets}}")
     lines.append(r"\tablehead{")
     lines.append(r"\colhead{Source} & \colhead{R.A.} & \colhead{Dec.} & "
-                 r"\colhead{$d$} & \colhead{$d$ ref.} & "
-                 r"\colhead{$L_\mathrm{bol}$} & \colhead{$L_\mathrm{bol}$ ref.} & "
-                 r"\colhead{$v_\mathrm{LSR}$} & \colhead{$v_\mathrm{LSR}$ ref.} & "
-                 r"\colhead{ALMA proposals ($<500$\,AU)} \\")
-    lines.append(r"& (J2000) & (J2000) & (kpc) & & ($10^4\,L_\odot$) & & "
-                 r"(km\,s$^{-1}$) & & }")
+                 r"\colhead{$d$} & \colhead{$d^{*}$} & "
+                 r"\colhead{$L_\mathrm{bol}$} & \colhead{$L^{*}$} & "
+                 r"\colhead{$v_\mathrm{LSR}$} & \colhead{$v^{*}$} & "
+                 r"\colhead{$N_\mathrm{ALMA}$} \\")
+    lines.append(r"& (J2000) & (J2000) & (kpc) & ref. & ($10^4\,L_\odot$) "
+                 r"& ref. & (km\,s$^{-1}$) & ref. & ($<500$\,AU)}")
     lines.append(r"\startdata")
     for r in rows:
-        codes_str = format_proposals(r["codes"], per_line=1)
+        n_alma = len(r["codes"])
         lines.append(
             f"{r['name']} & {r['ra']} & {r['dec']} & "
             f"{r['d']:.2f} & {r['dref']} & "
             f"{r['lbol']/1e4:.2f} & {r['lref']} & "
             f"{r['v_lsr']} & {r['vref']} & "
-            f"{codes_str} \\\\"
+            f"{n_alma if n_alma > 0 else r'\\nodata'} \\\\"
         )
     lines.append(r"\enddata")
-    # Footnotes for data-measured vlsr
+    # Numbered citet references
+    refs_list = sorted(citet_map.items(), key=lambda kv: kv[1])
+    if refs_list:
+        ref_strs = [rf"[{n}] {cmd}" for cmd, n in refs_list]
+        lines.append(r"\tablerefs{" + "; ".join(ref_strs) + "}")
+    # Footnotes for data-measured vlsr / literature ref
     for tag in sorted(footnotes.keys()):
         lines.append(rf"\tablenotetext{{{tag}}}{{{footnotes[tag]}}}")
     lines.append(r"\tablecomments{Sources are those with $L_\mathrm{bol} \geq 10^4\,L_\odot$ "
@@ -247,8 +275,26 @@ def main():
                  r"$v_\mathrm{LSR}$ reference is `data' when measured from corroborating "
                  r"in-band tracer lines (see per-source footnotes), `RMS' for the Lumsden "
                  r"et al. (2013) tabulated value, or a literature citation otherwise.}")
-    lines.append(r"\end{deluxetable*}")
-    lines.append(r"\end{longrotatetable}")
+    lines.append(r"\end{deluxetable}")
+
+    # Companion proposals table — one line per proposal-code per target
+    lines.append(r"")
+    lines.append(r"\startlongtable")
+    lines.append(r"\begin{deluxetable}{lp{3.5in}}")
+    lines.append(r"\tabletypesize{\scriptsize}")
+    lines.append(r"\tablecaption{ALMA proposal codes (resolution finer than "
+                 r"500\,AU at the source distance) per target.\label{tab:targets_alma}}")
+    lines.append(r"\tablehead{\colhead{Source} & "
+                 r"\colhead{ALMA proposal codes}}")
+    lines.append(r"\startdata")
+    for r in rows:
+        if not r["codes"]:
+            lines.append(f"{r['name']} & \\nodata \\\\")
+        else:
+            codes_str = ", ".join(r["codes"])
+            lines.append(f"{r['name']} & {codes_str} \\\\")
+    lines.append(r"\enddata")
+    lines.append(r"\end{deluxetable}")
 
     OUT.write_text("\n".join(lines) + "\n")
     print(f"\nwrote {OUT}")

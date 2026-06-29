@@ -237,7 +237,7 @@ def fmt_smoothed_cell(peak_K, sigma_K, detected):
 def write_tex_smoothed(df: pd.DataFrame):
     df = df.sort_values(["target", "proposal", "line"])
     lines = [
-        r"\begin{longrotatetable}",
+        r"\startlongtable",
         r"\begin{deluxetable*}{lllccccc}",
         r"\rotate",
         r"\tablecaption{NaCl + RRL detections / $3\sigma$ upper limits with the "
@@ -276,7 +276,6 @@ def write_tex_smoothed(df: pd.DataFrame):
         r"$300$\,AU/d-target before remeasuring the per-channel noise via "
         r"mad\_std. Falls back to the native $\sigma$ where $\theta_\mathrm{beam} \geq 300$\,AU.}",
         r"\end{deluxetable*}",
-        r"\end{longrotatetable}",
     ]
     OUT_TEX.write_text("\n".join(lines) + "\n")
 

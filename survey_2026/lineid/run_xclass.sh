@@ -17,5 +17,10 @@ TGT_DIR="${HERE}/${LABEL}"
 
 source /orange/adamginsburg/miniconda3/bin/activate /blue/adamginsburg/adamginsburg/miniconda3/envs/xclass
 
+# Make libgfortran.so.3 discoverable for myNewXCLASS.exe (Bhula's setup
+# symlinks /apps/libgfortran/3.0.0/lib/libgfortran.so.3 into his work dir;
+# we just prepend the dir to LD_LIBRARY_PATH).
+export LD_LIBRARY_PATH="/apps/libgfortran/3.0.0/lib:${LD_LIBRARY_PATH}"
+
 cd "${TGT_DIR}"
 python "${HERE}/xclass_runner.py" "${LABEL}"

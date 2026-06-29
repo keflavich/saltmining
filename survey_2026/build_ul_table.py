@@ -109,7 +109,7 @@ def fmt_line(line: str) -> str:
 def write_tex(df: pd.DataFrame):
     df = df.sort_values(["target", "proposal", "line"])
     lines = []
-    lines.append(r"\begin{longrotatetable}")
+    lines.append(r"\startlongtable")
     lines.append(r"\begin{deluxetable*}{llllrcc}")
     lines.append(r"\tablecaption{Upper limits on salt (NaCl, KCl) and water "
                  r"emission toward the brightest mm continuum source in each "
@@ -140,7 +140,6 @@ def write_tex(df: pd.DataFrame):
                  r"smoothing to a $10$\,\kms\ channel. Smoothing reduces the "
                  r"noise by $\sqrt{\Delta v_\mathrm{chan} / 10\,\mathrm{km\,s^{-1}}}$.}")
     lines.append(r"\end{deluxetable*}")
-    lines.append(r"\end{longrotatetable}")
     OUT_TEX.write_text("\n".join(lines) + "\n")
 
 

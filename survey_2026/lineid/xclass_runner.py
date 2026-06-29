@@ -97,21 +97,31 @@ def run_xclass_one(spec_fits: Path, molfit_file: Path, vlsr: float,
     bmin = float(h.get("BMIN", 0)) * 3600.0
     tel_arcsec = 0.5 * (bmaj + bmin) if (bmaj > 0 and bmin > 0) else 0.5
 
-    # Pass the spectrum file path to XCLASS so it loads + compares
+    # myXCLASS just generates an LTE model spectrum on the requested grid;
+    # we overlay it against the data ourselves afterward.
     res = myXCLASS(
-        FileName=str(spec_fits),
         FreqMin=FreqMin, FreqMax=FreqMax, FreqStep=FreqStep,
-        TelescopeSize=tel_arcsec, Inter_Flag=True,
-        t_back_flag=True, tBack=2.7, vLSR=vlsr,
-        iso_flag=False,
-        MolfitsFileBaseNames=[molfit_file.stem],
-        IsoTableFileName="",
-        CollisionFileName="",
+        TelescopeSize=tel_arcsec,
+        BMIN=bmin if bmin > 0 else tel_arcsec,
+        BMAJ=bmaj if bmaj > 0 else tel_arcsec,
+        BPA=float(h.get("BPA", 0)),
+        Inter_Flag=True, Redshift=0.0,
+        t_back_flag=True, tBack=2.7, tslope=0.0,
         BackgroundFileName="",
-        DustFileName="",
-        verbose=False,
-        Inter_Flag_Use=True,
-        NumberProcessors=4,
+        N_H=0.0, beta_dust=0.0, kappa_1300=0.0, DustFileName="",
+        Te_ff=None, EM_ff=None,
+        kappa_sync=None, B_sync=None, p_sync=None, l_sync=None,
+        ContPhenFuncID=None,
+        ContPhenFuncParam1=None, ContPhenFuncParam2=None,
+        ContPhenFuncParam3=None, ContPhenFuncParam4=None,
+        ContPhenFuncParam5=None,
+        MolfitsFileName=str(molfit_file),
+        iso_flag=False, IsoTableFileName="",
+        CollisionFileName="",
+        NumModelPixelXX=100, NumModelPixelYY=100,
+        LocalOverlapFlag=False, NoSubBeamFlag=True,
+        dbFilename="",
+        RestFreq=0.0, vLSR=vlsr,
     )
     # task_myXCLASS returns (modeldata, log, transitions, components, ...)
     modeldata = res[0]

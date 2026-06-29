@@ -1,6 +1,30 @@
 # survey_2026 handoff doc
 
-Date: 2026-06-29. Paper at `/orange/adamginsburg/salt/demography_2026/` (Overleaf git-synced). Code at `/orange/adamginsburg/salt/survey_2026/`.
+Date: 2026-06-29 (rev 06:33). Paper at `/orange/adamginsburg/salt/demography_2026/` (Overleaf git-synced). Code at `/orange/adamginsburg/salt/survey_2026/`.
+
+## Session 06-29 02:00-06:33 outcomes (most recent first)
+
+- 16 download-only tasks closed (#34, #36-49 minus #39/#47, #56-57, #59) — all already documented in `tab:targets_noalma` (T3) as `No obs` or `best res N AU > 500`.
+- 7 ALMA-blocked W3 tasks closed (#50-55, #58).
+- detections.tex now AUTO-built by `build_detections_table.py` from `per_target_paper.csv` + `literature_detections.csv` (closed #33). Manual entries kept only for `disk`, `COMs`, `PN` cols.
+- Literature CSV gained SiS_kind/SiS_K_or_3s_mK columns. New lit rows: NGC6334I (MM1B/McGuire+2018), Orion-SrcI RRL=ul+SiS=det, GGD27, I07299-1651 HOTDISK, NGC6334IN-SMA6, IRAS16562, S255IR SMA1. Closed #26, #28, #29, #30, #31, #32.
+- Tables 1+3: RA-Dec merged into single `\texttt{HH:MM:SS.s+DD:MM:SS}` column (per user); Galactic coord wrapped in `\texttt{}` for fixed-width alignment. ALMA-code parens contain per-target highest angular resolution.
+- Table 4: source identifier = literature mm/SMA name (NGC6334I-MM1B, NGC6334IN-SMA6, I16547A/B, ...) with `<IRAShandle>mm<rank>` fallback. KCl column added. Switched to portrait `deluxetable+startlongtable`.
+- Table 5: removed `canonical` v_LSR fallback; non-detections show literature value w/ ref. Molecule names LaTeX-formatted via `latex_line()`.
+- Table 6: SiS column + per-cell `N_det/N_obs` fractions; lit-confirmed dets merged into numerator+denominator.
+- Spectrum-panel script: figsize 24×4n at dpi=180 (was 18×2.5n at 110); black dashed verticals + black labels for >=5σ detected lines NOT in salt search-list (orange = salt search, black = COMs/shock/contamination).
+- Confusion-fraction f(>5σ) computed for MonR2-IRS3 (0.03) and MonR2-IRS2 (0.044); G345.0052 still empty (cube-path resolution issue in `compute_confusion_and_com.py`).
+- NGC6334IN-SMA6 aux beam derived via BEAMS-table extension fallback (closed #60).
+- Slurm batch DONE (22 line_pipe jobs fully drained).
+
+## Remaining pending tasks (4)
+
+- **#35 OrionB-Flame**: 2017.1.01102.S delivered only mfs continuum; needs re-imaging from raw vis (uvdata absent).
+- **#39 IRAS17233-3606**: 0.022" data available in archive but not downloaded (uvdata absent for any of 7 proposals).
+- **#47 G081.6802+00.5405A (DR21(OH) A)**: 2019.1.00263.S at 0.26"; uvdata absent.
+- **#61 G268.4222-00.8490**: uvdata MISMATCHED — `member.uid___A001_X1465_X2851.I08303-4303_sci.spw*` (I08303 is a *different* target, not G268.4222). Needs targeted re-download of correct MOUS for G268.4222 = I09002.
+
+All four require user-attended ALMA archive download or re-imaging — autonomous-agent execution not appropriate.
 
 ## Goal
 

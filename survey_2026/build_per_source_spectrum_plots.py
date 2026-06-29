@@ -38,6 +38,8 @@ LINE_REST_GHZ = {n: float(u.Quantity(f).to(u.GHz).value) for n, f in DISK_LINES.
 
 
 def jy_per_beam_to_K(nu_GHz, bmaj_arcsec, bmin_arcsec):
+    if not (nu_GHz > 0 and bmaj_arcsec > 0 and bmin_arcsec > 0):
+        return np.nan
     return 1.222e6 / (nu_GHz ** 2 * bmaj_arcsec * bmin_arcsec)
 
 

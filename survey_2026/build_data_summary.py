@@ -175,6 +175,16 @@ def beam_for_proposal(proposal_dir: Path):
         bmaj = h.get("BMAJ")
         if bmaj is not None:
             return float(bmaj) * 3600.0
+        # Per-channel CASA cubes store beams in a BEAMS binary table
+        # extension instead of the primary header.
+        try:
+            with fits.open(p, memmap=True) as hdul:
+                for hdu in hdul[1:]:
+                    if hdu.name == "BEAMS" and hdu.data is not None:
+                        col = hdu.data["BMAJ"]
+                        return float(np.nanmedian(col))  # arcsec
+        except (OSError, fits.VerifyError, KeyError):
+            continue
     return None
 
 

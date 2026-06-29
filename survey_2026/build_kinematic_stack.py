@@ -200,16 +200,24 @@ def main():
         raise SystemExit(f"no cubes for {args.target}/{args.proposal}")
 
     # Resolve guide line rest freq
+    guide_rest = None
     if args.guide_line in RRLS:
         guide_rest = RRLS[args.guide_line]
-    else:
+    if guide_rest is None:
         rest_lookup = {l[1].split()[0]: l[0] for l in LINELIST}
         rest_lookup.update({n: f for n, f in RRLS.items()})
-        if args.guide_line in rest_lookup:
-            guide_rest = rest_lookup[args.guide_line]
-        else:
-            raise SystemExit(f"don't know rest freq for {args.guide_line}; "
-                              f"add to RRLS or LINELIST")
+        guide_rest = rest_lookup.get(args.guide_line)
+    if guide_rest is None:
+        # Last resort: pull rest_GHz from line_measurements.csv
+        meas = prop_dir / "line_measurements.csv"
+        if meas.exists():
+            mdf = pd.read_csv(meas)
+            row = mdf[mdf["line"] == args.guide_line]
+            if not row.empty and np.isfinite(row.iloc[0].get("rest_GHz", np.nan)):
+                guide_rest = float(row.iloc[0]["rest_GHz"])
+    if guide_rest is None:
+        raise SystemExit(f"don't know rest freq for {args.guide_line}; "
+                          f"add to RRLS / LINELIST or to line_measurements.csv")
     guide_cube = find_cube_with_line(cubes, guide_rest, args.vlsr)
     if guide_cube is None:
         raise SystemExit(f"no cube contains guide line {args.guide_line} "

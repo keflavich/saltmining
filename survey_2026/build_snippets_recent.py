@@ -29,9 +29,60 @@ def name_variants(s):
     return {v for v in out if v}
 
 
+def _brightest_source_coord(target):
+    """Return (ra_deg, dec_deg) of the brightest mm continuum source across
+    all analyzed proposals, or None."""
+    import pandas as pd
+    tgt_dir = ROOT / "analysis_products" / target
+    if not tgt_dir.is_dir():
+        return None
+    best = None
+    for prop_dir in sorted(tgt_dir.glob("2*")):
+        cont = prop_dir / "continuum_sources.csv"
+        if not cont.exists():
+            continue
+        try:
+            df = pd.read_csv(cont)
+        except pd.errors.EmptyDataError:
+            continue
+        if df.empty or "peak_Jybeam" not in df.columns:
+            continue
+        idx = int(df["peak_Jybeam"].idxmax())
+        peak = float(df.loc[idx, "peak_Jybeam"])
+        ra = float(df.loc[idx, "ra_deg"])
+        dec = float(df.loc[idx, "dec_deg"])
+        if best is None or peak > best[0]:
+            best = (peak, ra, dec)
+    if best is None:
+        return None
+    return (best[1], best[2])
+
+
+def _cube_in_fov(cube_path, ra, dec):
+    """True if the (ra, dec) world coord falls inside cube_path's FOV."""
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore")
+        h = fits.getheader(cube_path)
+        try:
+            wcs = WCS(h).celestial
+            xp, yp = wcs.world_to_pixel_values(ra, dec)
+        except (ValueError, KeyError):
+            return False
+        nx = int(h.get("NAXIS1", 0))
+        ny = int(h.get("NAXIS2", 0))
+        return (0 <= float(xp) < nx) and (0 <= float(yp) < ny)
+
+
 def find_files(target):
-    """Return (best_cont, sorted_cubes) across all proposals for this target."""
+    """Return (best_cont, sorted_cubes) across all proposals for this target.
+    Filters out cubes whose FOV does NOT contain the brightest mm continuum
+    source for this target (handles multi-pointing projects where the same
+    directory holds data for unrelated fields)."""
     tgt_keys = name_variants(target)
+    coord = _brightest_source_coord(target)
     cont_paths, cube_paths = [], []
     for prop_dir in sorted(UVDIR.iterdir()):
         if not prop_dir.is_dir():
@@ -48,13 +99,26 @@ def find_files(target):
                     cont_paths.append(f)
                 elif ".cube." in f.name:
                     cube_paths.append(f)
-    # best cont: multi-spw combined preferred
+    # FOV filter
+    if coord is not None:
+        ra, dec = coord
+        cont_paths = [p for p in cont_paths if _cube_in_fov(p, ra, dec)]
+        cube_paths = [p for p in cube_paths if _cube_in_fov(p, ra, dec)]
     cont_best = None
     if cont_paths:
         multi = [p for p in cont_paths if re.search(r"spw\d+(_\d+){2,}", p.name)]
         pool = multi if multi else cont_paths
         cont_best = sorted(pool, key=lambda p: p.stat().st_size)[0]
     return cont_best, sorted(cube_paths, key=lambda p: p.name)
+
+
+def find_field_stack_fits(target):
+    """Field-level stack cube FITS files (NaCl/KCl/H2O) from analysis_products/
+    <target>/stacks/. These are 3D cubes that CARTA can display."""
+    sdir = ROOT / "analysis_products" / target / "stacks"
+    if not sdir.is_dir():
+        return []
+    return sorted(sdir.glob("*_stack.fits"))
 
 
 CARTA_ROOT_PREFIX = "/orange/adamginsburg"
@@ -113,7 +177,7 @@ def find_detection_mom0s(target, max_per_source=3, snr_threshold=5.0):
     return out
 
 
-def build_snippet_code(cont, cubes, regs, mom0s=None):
+def build_snippet_code(cont, cubes, regs, mom0s=None, stacks=None):
     lines = []
     rest = list(cubes)
     if cont is not None:
@@ -126,6 +190,9 @@ def build_snippet_code(cont, cubes, regs, mom0s=None):
     if mom0s:
         for m in mom0s:
             lines.append(f'await app.appendFile("{carta_path(m)}")')
+    if stacks:
+        for s in stacks:
+            lines.append(f'await app.appendFile("{carta_path(s)}")')
     for r in regs:
         rdir = carta_path(r.parent) + "/"
         rname = r.name
@@ -147,7 +214,9 @@ def main():
             print(f"  {tgt}: NO LOCAL DATA — skipping")
             continue
         mom0s = find_detection_mom0s(tgt)
-        code = build_snippet_code(cont, cubes, regs, mom0s=mom0s)
+        stacks = find_field_stack_fits(tgt)
+        code = build_snippet_code(cont, cubes, regs, mom0s=mom0s,
+                                    stacks=stacks)
         snippet = {
             "$schema": "https://cartavis.github.io/schemas/snippet_schema_1.json",
             "categories": [CATEGORY],
@@ -158,7 +227,8 @@ def main():
         out = SNIP / f"{tgt}_2026.json"
         out.write_text(json.dumps(snippet, indent=4))
         print(f"  wrote {out.name}: cont={'yes' if cont else 'no'}, "
-              f"cubes={len(cubes)}, regs={len(regs)}, mom0s={len(mom0s)}")
+              f"cubes={len(cubes)}, regs={len(regs)}, mom0s={len(mom0s)}, "
+              f"stacks={len(stacks)}")
 
 
 if __name__ == "__main__":

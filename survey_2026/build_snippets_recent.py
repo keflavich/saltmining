@@ -76,11 +76,26 @@ def _cube_in_fov(cube_path, ra, dec):
         return (0 <= float(xp) < nx) and (0 <= float(yp) < ny)
 
 
+_CAL_PATTERNS = (
+    re.compile(r"J\d{4}[-+]\d{4}"),         # quasar calibrators
+    re.compile(r"_ph\.", re.IGNORECASE),    # phase cal
+    re.compile(r"_ampph\.", re.IGNORECASE),
+    re.compile(r"_bp\.", re.IGNORECASE),    # bandpass cal
+    re.compile(r"_check\.", re.IGNORECASE),
+    re.compile(r"_pol\.", re.IGNORECASE),
+)
+
+
+def _is_calibrator(filename: str) -> bool:
+    return any(p.search(filename) for p in _CAL_PATTERNS)
+
+
 def find_files(target):
     """Return (best_cont, sorted_cubes) across all proposals for this target.
     Filters out cubes whose FOV does NOT contain the brightest mm continuum
     source for this target (handles multi-pointing projects where the same
-    directory holds data for unrelated fields)."""
+    directory holds data for unrelated fields), and skips ALMA calibrator
+    files (quasar phase/bandpass/check cals)."""
     tgt_keys = name_variants(target)
     coord = _brightest_source_coord(target)
     cont_paths, cube_paths = [], []
@@ -94,6 +109,8 @@ def find_files(target):
                 continue
             for f in sub.iterdir():
                 if not f.name.endswith(".I.pbcor.fits"):
+                    continue
+                if _is_calibrator(f.name):
                     continue
                 if ".cont." in f.name:
                     cont_paths.append(f)

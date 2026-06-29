@@ -208,3 +208,4 @@ d50b76e  CARTA snippet WCS-filter + stack FITS files
 This session ended after 60+ task creations and many edits. Memory entries pre-existing:
 - `survey_2026 marked COMPLETE` was wrong — still active. User has been adding tasks (XCLASS, literature reconciliation, etc.).
 - See `~/.claude/projects/-orange-adamginsburg-salt/memory/MEMORY.md` for the rest.
+Cutout: 16,687 GB → 735 GB written (95.6% reduction)

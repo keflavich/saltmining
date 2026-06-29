@@ -5,20 +5,20 @@ For each target with completed line_pipeline analysis:
   - ALMA pointing (RA, Dec from the brightest mm cont source pixel; uncertainty
     estimated from beam_FWHM/(2*SNR))
   - Source velocity (peak velocity of the strongest detected line at the
-    brightest source; the canonical v_LSR from launch_l4_d2_pipeline if
-    nothing is detected)
+    brightest source; vlsr_from_literature.json reference if undetected)
   - Reference line used to anchor the velocity (line name with highest SNR
-    at the brightest source)
-  - Detection peak T and integrated intensity (K km/s) for:
+    at the brightest source) — pretty-formatted for LaTeX
+  - Detection peak T (mK) for:
       RRL (Hn alpha/beta/gamma)
       H2O 232 GHz
       Brightest NaCl line
-    "..." if not in spectral coverage, "<3 sigma" if covered but undetected.
+    \nodata if not in spectral coverage, "<3 sigma" if covered but undetected.
 
 Outputs:
   data/obs_params.csv
   /orange/adamginsburg/salt/demography_2026/obs_params.tex
 """
+import json
 import re
 import warnings
 from pathlib import Path
@@ -33,15 +33,10 @@ ROOT = Path("/orange/adamginsburg/salt/survey_2026")
 ANALYSIS = ROOT / "analysis_products"
 UVDIR = ROOT / "uvdata"
 SRC_CSV = ROOT / "data/sources_L4_d2.csv"
+LIT_VLSR = ROOT / "data/vlsr_from_literature.json"
+DATA_VLSR = ROOT / "data/vlsr_from_data.json"
 OUT_CSV = ROOT / "data/obs_params.csv"
 OUT_TEX = Path("/orange/adamginsburg/salt/demography_2026/obs_params.tex")
-
-# Canonical VLSR fallback (from launch_l4_d2_pipeline.py MANUAL_VLSR + RMS).
-MANUAL_VLSR = {
-    "MonR2-IRS3": 10.0, "MonR2-IRS2": 10.0,
-    "NGC6334I":  -7.0, "NGC6334IN": -3.5,
-    "Orion_SrcI": 5.0,
-}
 
 IRAS_OVERRIDE = {
     "OrionBN-KL":         "I05327",
@@ -216,6 +211,72 @@ def line_value(meas_df, bid, regex, integ_unit):
     )
 
 
+_LIT_VLSR = json.loads(LIT_VLSR.read_text()) if LIT_VLSR.exists() else {}
+_DATA_VLSR = json.loads(DATA_VLSR.read_text()) if DATA_VLSR.exists() else {}
+
+
+def latex_line(line_name):
+    """Format an internal line label into compact LaTeX. Examples:
+       H30alpha       → H30$\\alpha$
+       H2O_v2_5_5_...232 → H$_2$O ($v_2$, 232\\,GHz)
+       NaCl_v0_J18-17 → NaCl $J$=18--17 ($v$=0)
+       SiO_v0_5-4     → SiO $J$=5--4
+       CH3OH_4-3      → CH$_3$OH $J$=4--3
+       SO_65-54       → SO
+    """
+    if not isinstance(line_name, str) or not line_name:
+        return r"\nodata"
+    s = line_name
+    # RRL
+    m = re.match(r"^H(\d+)(alpha|beta|gamma|delta)$", s)
+    if m:
+        greek = {"alpha": r"\alpha", "beta": r"\beta",
+                  "gamma": r"\gamma", "delta": r"\delta"}[m.group(2)]
+        return f"H{m.group(1)}${greek}$"
+    # H2O 232 GHz (any quantum-number suffix)
+    m = re.match(r"^H2O(?:_v(\d))?", s)
+    if m:
+        if m.group(1):
+            return f"H$_2$O ($v_{{{m.group(1)}}}$, 232\\,GHz)"
+        return r"H$_2$O 232\,GHz"
+    # NaCl / KCl with optional v=N and J=A-B
+    m = re.match(r"^(NaCl|KCl|Na37Cl|K37Cl)(?:_v(\d))?(?:_J(\d+)-(\d+))?", s)
+    if m:
+        mol = m.group(1).replace("37", r"$^{37}$")
+        parts = [mol]
+        if m.group(3):
+            parts.append(rf" $J$={m.group(3)}--{m.group(4)}")
+        if m.group(2):
+            parts.append(rf" ($v$={m.group(2)})")
+        return "".join(parts)
+    # SiO/SiS with v and J
+    m = re.match(r"^(SiO|SiS)(?:_v(\d))?(?:_J?(\d+)-(\d+))?", s)
+    if m:
+        out = m.group(1)
+        if m.group(3):
+            out += rf" $J$={m.group(3)}--{m.group(4)}"
+        return out
+    # SO / SO2
+    if s.startswith("SO2"):
+        return r"SO$_2$"
+    if s.startswith("SO"):
+        m = re.match(r"^SO_(\d+)_(\d+)-(\d+)_(\d+)", s)
+        if m:
+            return rf"SO $J_{{N}}$={m.group(1)}$_{{{m.group(2)}}}$--{m.group(3)}$_{{{m.group(4)}}}$"
+        return "SO"
+    # COMs (simple molecule label, drop transition)
+    for mol_raw, mol_tex in [("CH3OCHO", r"CH$_3$OCHO"), ("CH3OCH3", r"CH$_3$OCH$_3$"),
+                              ("CH3OH", r"CH$_3$OH"), ("CH3CN", r"CH$_3$CN"),
+                              ("C2H5CN", r"C$_2$H$_5$CN"), ("HC3N", r"HC$_3$N"),
+                              ("NH2CHO", r"NH$_2$CHO"), ("HCOOH", r"HCOOH"),
+                              ("HNCO", r"HNCO"), ("13CO", r"$^{13}$CO"),
+                              ("C18O", r"C$^{18}$O"), ("H2CO", r"H$_2$CO")]:
+        if s.startswith(mol_raw):
+            return mol_tex
+    # Fallback: escape underscores
+    return s.replace("_", r"\_")
+
+
 def collect():
     src = pd.read_csv(SRC_CSV)
     rows = []
@@ -238,15 +299,23 @@ def collect():
         ra_str, dec_str = deg_to_alma_str(float(srow["ra_deg"]), float(srow["dec_deg"]))
         snr_cont = float(srow.get("snr", 0.0)) if "snr" in srow.index else 0.0
         sigpos = pos_uncert_arcsec(beam_arcsec, snr_cont)
-        # source velocity: pick highest-SNR detected line at brightest src; use its peak_v
+        # source velocity: pick highest-SNR detected line at brightest src;
+        # use its peak_v. If nothing detected, fall back to the
+        # vlsr_from_literature reference (no "canonical" launch value).
         at_src = meas[(meas["source"] == bid) & (meas["snr"] >= 5.0)]
         if not at_src.empty:
             best_line = at_src.nlargest(1, "snr").iloc[0]
             vsrc = float(best_line["peak_v"])
             vref_line = str(best_line["line"])
         else:
-            vsrc = MANUAL_VLSR.get(name)
-            vref_line = "canonical"
+            vlit = _LIT_VLSR.get(name) or _DATA_VLSR.get(name)
+            if vlit and vlit.get("v_LSR_kms") is not None:
+                vsrc = float(vlit["v_LSR_kms"])
+                ref_short = str(vlit.get("reference", "literature")).split(";")[0][:32]
+                vref_line = f"lit: {ref_short}"
+            else:
+                vsrc = None
+                vref_line = ""
         # line values
         rrl_peak, rrl_int, rrl_line, _, rrl_status = line_value(meas, bid, RRL_RE, "")
         h2o_peak, h2o_int, h2o_line, _, h2o_status = line_value(meas, bid, H2O_RE, "")
@@ -268,7 +337,7 @@ def collect():
 def fmt_cell(peak, integ, status):
     """One cell: peak in mK (always)."""
     if status == "detected":
-        if peak is None:
+        if peak is None or not np.isfinite(peak):
             return r"\nodata"
         return f"{peak*1000:.1f}"
     if status == "covered":
@@ -281,7 +350,8 @@ def fmt_cell(peak, integ, status):
 def write_tex(df):
     df = df.sort_values("name")
     out = []
-    out.append(r"\begin{deluxetable*}{lcccccccc}")
+    out.append(r"\startlongtable")
+    out.append(r"\begin{deluxetable}{lcccccccc}")
     out.append(r"\tabletypesize{\scriptsize}")
     out.append(r"\tablecaption{Fundamental observational parameters per target. "
                r"Coordinates are the J2000 position of the brightest mm "
@@ -290,9 +360,9 @@ def write_tex(df):
                r"divided by twice the source signal-to-noise ratio. "
                r"$v_\mathrm{LSR}$ is the peak velocity of the highest-SNR line "
                r"detected at the brightest source (Ref.\ line column); for "
-               r"non-detections the launched canonical value is reported. "
-               r"Detection cells give peak brightness (mK) of the highest-SNR "
-               r"line in the species class. "
+               r"non-detections the literature value is reported (Ref.\ "
+               r"line = `lit: \dots'). Detection cells give peak brightness "
+               r"(mK) of the highest-SNR line in the species class. "
                r"$<\!3\sigma$ marks coverage without a $\geq 5\sigma$ detection; "
                r"\nodata\ marks no spectral coverage of the species.\label{tab:obspars}}")
     out.append(r"\tablehead{")
@@ -305,7 +375,17 @@ def write_tex(df):
     out.append(r"\startdata")
     for _, r in df.iterrows():
         field = str(r["field"]).replace("_", r"\_")
-        ref = str(r["vref_line"]).replace("_", r"\_")
+        ref_raw = str(r["vref_line"])
+        if ref_raw.startswith("lit:"):
+            txt = ref_raw[4:].strip()
+            for ch, esc in [("&", r"\&"), ("_", r"\_"), ("%", r"\%"),
+                             ("#", r"\#")]:
+                txt = txt.replace(ch, esc)
+            ref = "lit: " + txt
+        elif ref_raw:
+            ref = latex_line(ref_raw)
+        else:
+            ref = r"\nodata"
         rrl = fmt_cell(r["rrl_peak_K"], r["rrl_int"], r["rrl_status"])
         h2o = fmt_cell(r["h2o_peak_K"], r["h2o_int"], r["h2o_status"])
         nacl = fmt_cell(r["nacl_peak_K"], r["nacl_int"], r["nacl_status"])
@@ -316,7 +396,7 @@ def write_tex(df):
             f"{v_str} & {ref} & {rrl} & {h2o} & {nacl} \\\\"
         )
     out.append(r"\enddata")
-    out.append(r"\end{deluxetable*}")
+    out.append(r"\end{deluxetable}")
     OUT_TEX.write_text("\n".join(out) + "\n")
 
 

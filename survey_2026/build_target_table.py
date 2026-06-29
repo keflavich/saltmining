@@ -59,37 +59,129 @@ SPECIAL_LUM_REF = {
 
 
 def query_alma_lt500au(coord, dist_kpc, radius=15 * u.arcsec):
-    """Return sorted unique project codes with spatial_resolution * d_pc < 500 AU."""
+    """Return (per_code, best_res_au, n_obs_total).
+
+    per_code: list of (code, min_res_arcsec) sorted by code, restricted to obs
+              whose spatial resolution is finer than 500 AU at the source d.
+    best_res_au: best resolution (smallest) at this position over ALL obs (AU).
+    n_obs_total: total number of obs returned by ALMA archive at this position.
+    """
     try:
         q = Alma.query_region(coord, radius=radius)
     except (ConnectionError, ValueError) as e:
         print(f"  query error: {e}")
-        return []
+        return [], None, 0
     if q is None or len(q) == 0:
-        return []
+        return [], None, 0
     sr_col = "spatial_resolution" if "spatial_resolution" in q.colnames else "s_resolution"
     pc_col = "proposal_id" if "proposal_id" in q.colnames else "project_code"
     sr = np.asarray(q[sr_col], dtype=float)
     pc = np.asarray(q[pc_col], dtype=str)
+    finite = np.isfinite(sr) & (sr > 0)
+    n_obs_total = int(finite.sum())
+    if not finite.any():
+        return [], None, 0
+    best_res_arcsec = float(np.nanmin(sr[finite]))
+    best_res_au = best_res_arcsec * dist_kpc * 1000.0
     res_au = sr * dist_kpc * 1000.0
-    mask = np.isfinite(sr) & (sr > 0) & (res_au < 500.0)
-    return sorted(set(pc[mask]))
-
-
-def format_proposals(codes, per_line=1):
-    """Wrap a list of project codes onto multiple lines for table cell."""
-    if not codes:
-        return r"\nodata"
-    chunks = [codes[i:i + per_line] for i in range(0, len(codes), per_line)]
-    lines = [", ".join(c) for c in chunks]
-    return r" \newline ".join(lines)
+    mask = finite & (res_au < 500.0)
+    # Group by code → min resolution
+    per_code = {}
+    for c, s in zip(pc[mask], sr[mask]):
+        per_code[c] = min(per_code.get(c, np.inf), float(s))
+    return sorted(per_code.items()), best_res_au, n_obs_total
 
 
 def fmt_coord(ra_deg, dec_deg):
+    """Return compact (ra, dec) strings with no internal whitespace."""
     c = ac.SkyCoord(ra_deg * u.deg, dec_deg * u.deg)
-    ra = c.ra.to_string(unit=u.hourangle, sep=":", pad=True, precision=1)
-    dec = c.dec.to_string(unit=u.deg, sep=":", pad=True, precision=0, alwayssign=True)
+    ra = c.ra.to_string(unit=u.hourangle, sep="", pad=True, precision=1)
+    dec = c.dec.to_string(unit=u.deg, sep="", pad=True, precision=0, alwayssign=True)
     return ra, dec
+
+
+def fmt_galactic(glon, glat):
+    """Compact Gxxx.xxxx{+|-}xx.xxxx form."""
+    s = "+" if glat >= 0 else "-"
+    return f"G{float(glon):08.4f}{s}{abs(float(glat)):07.4f}"
+
+
+def fmt_distance(d_kpc):
+    """Distance formatted to appropriate sig figs."""
+    if d_kpc >= 10:
+        return f"{d_kpc:.0f}"
+    if d_kpc >= 1:
+        return f"{d_kpc:.1f}"
+    return f"{d_kpc:.2f}"
+
+
+# Common / IRAS / popular name overrides for table display.
+COMMON_NAME = {
+    "OrionSrcI":          "Orion-SrcI",
+    "Orion_SrcI":         "Orion-SrcI",
+    "OrionBN":            "Orion-BN",
+    "Orion-BN":           "Orion-BN",
+    "OrionBN-KL":         "Orion-BN/KL",
+    "OrionB-Flame":       "NGC 2024 (Flame)",
+    "NGC6334I":           "NGC 6334I-mm1b",
+    "NGC6334IN":          "NGC 6334I(N)-SMA6",
+    "MonR2-IRS3":         "MonR2-IRS3",
+    "MonR2-IRS2":         "MonR2-IRS2",
+    "GGD12-15":           "GGD 12-15",
+    "Lagoon-Her36":       "Her 36 (M8)",
+    "NGC6514":            "NGC 6514 (M20)",
+    "S140-IRS1":          "S140-IRS1",
+    "G268.4222-00.8490":  "G268.42-0.85",
+    "G010.8411-02.5919":  "GGD 27 / I18162",
+    "G011.9197-00.6131":  "G11.92 mm1",
+    "G017.6396+00.1580":  "G17.64+0.16",
+    "G351.7745-00.5377":  "G351.77 mm1",
+    "G013.6562-00.5997":  "W33A",
+    "G019.6097-00.2342":  "I18243-1210",
+    "G023.0099-00.4108":  "G23.01 mm2",
+    "G028.8621+00.0656":  "G28.86 mm1",
+    "G029.0036+00.0083":  "G29.00 mm1",
+    "G033.6437-00.2277":  "K3-50A",
+    "G035.5781+00.0709":  "I18553+0214",
+    "G045.0712+00.1321":  "K47",
+    "G081.6802+00.5405A": "DR21(OH) A",
+    "G081.6802+00.5405B": "DR21(OH) B",
+    "G133.7184+01.2237":  "W3-IRS5",
+    "G133.7150+01.2155":  "W3-IRS4",
+    "G133.7354+01.1827":  "W3(OH)",
+    "G189.7791-00.1037":  "S252A",
+    "G192.6005-00.0479":  "S255IR SMA1",
+    "G232.6207+00.9959":  "I07299-1651",
+    "G268.3957-00.8541":  "G268.40-0.85",
+    "G343.5036-00.0119":  "I16957-4306",
+    "G345.0061+01.7944C": "G345.01 C",
+    "G345.0052+01.8209":  "G345.00+1.82",
+    "G345.4938+01.4677":  "IRAS 16562-3959",
+    "G345.5043+00.3480":  "I17016-4124",
+    "I16547-4247":        "I16547-4247",
+}
+
+
+def alma_target_names_to_iras(s):
+    if not isinstance(s, str) or not s.strip():
+        return None
+    import re as _re
+    m = _re.search(r"IRAS\s*([0-9]{5}[+-][0-9]{4})", s)
+    if m:
+        return f"IRAS {m.group(1)}"
+    m = _re.search(r"\bI([0-9]{5})\b", s)
+    if m:
+        return f"I{m.group(1)}"
+    return None
+
+
+def common_name_for(row):
+    if row.name in COMMON_NAME:
+        return COMMON_NAME[row.name]
+    iras = alma_target_names_to_iras(getattr(row, "alma_target_names", ""))
+    if iras:
+        return iras
+    return row.name
 
 
 def load_vlsr_sources():
@@ -165,8 +257,12 @@ def main():
     for i, r in enumerate(src.itertuples(), 1):
         coord = ac.SkyCoord(r.ra_deg * u.deg, r.dec_deg * u.deg)
         print(f"[{i}/{len(src)}] {r.name} d={r.dist_kpc:.2f} kpc ...", flush=True)
-        codes = query_alma_lt500au(coord, r.dist_kpc)
+        per_code, best_res_au, n_obs_total = query_alma_lt500au(coord, r.dist_kpc)
+        codes = [c for c, _ in per_code]
         ra, dec = fmt_coord(r.ra_deg, r.dec_deg)
+        common = common_name_for(r)
+        gname = fmt_galactic(r.glon, r.glat)
+        d_str = fmt_distance(r.dist_kpc)
         dref = SPECIAL_DIST_REF.get(r.name, REFS_BY_ORIGIN.get(r.origin, ""))
         lref = SPECIAL_LUM_REF.get(r.name, LUM_REF_BY_ORIGIN.get(r.origin, ""))
         # v_LSR + reference. Long literature/data references go into per-source
@@ -218,11 +314,16 @@ def main():
         vref_n = citet_to_num(vref)
         rows.append(dict(
             name=r.name.replace("_", r"\_"),
+            common=common.replace("_", r"\_"),
+            gname=gname,
             ra=ra, dec=dec,
-            d=r.dist_kpc, lbol=r.lbol_lsun,
+            d=r.dist_kpc, d_str=d_str, lbol=r.lbol_lsun,
             dref=dref_n, lref=lref_n,
             v_lsr=v_str, vref=vref_n,
             codes=codes,
+            per_code=per_code,
+            best_res_au=best_res_au,
+            n_obs_total=n_obs_total,
         ))
 
     pd.DataFrame([{**r, "codes": "; ".join(r["codes"])} for r in rows]).to_csv(
@@ -230,31 +331,29 @@ def main():
     )
 
     lines = []
-    # Compact portrait version of the targets table. ALMA proposals are
-    # moved to a separate table; this one lists meta + vLSR only.
+    # Compact portrait version of the targets table. Common name + Galactic
+    # coord drive identification; J2000 RA/Dec are space-stripped to fit.
     lines.append(r"\startlongtable")
-    lines.append(r"\begin{deluxetable}{lccccccccc}")
+    lines.append(r"\begin{deluxetable}{lllllccccc}")
     lines.append(r"\tabletypesize{\scriptsize}")
     lines.append(r"\tablecaption{Target source list. ALMA project codes are listed when "
                  r"the corresponding observations achieved a spatial resolution finer than "
                  r"500\,AU at the source distance.\label{tab:targets}}")
     lines.append(r"\tablehead{")
-    lines.append(r"\colhead{Source} & \colhead{R.A.} & \colhead{Dec.} & "
+    lines.append(r"\colhead{Source} & \colhead{Galactic} & "
+                 r"\colhead{R.A.} & \colhead{Dec.} & "
                  r"\colhead{$d$} & \colhead{$d^{*}$} & "
                  r"\colhead{$L_\mathrm{bol}$} & \colhead{$L^{*}$} & "
-                 r"\colhead{$v_\mathrm{LSR}$} & \colhead{$v^{*}$} & "
-                 r"\colhead{$N_\mathrm{ALMA}$} \\")
-    lines.append(r"& (J2000) & (J2000) & (kpc) & ref. & ($10^4\,L_\odot$) "
-                 r"& ref. & (km\,s$^{-1}$) & ref. & ($<500$\,AU)}")
+                 r"\colhead{$v_\mathrm{LSR}$} & \colhead{$v^{*}$} \\")
+    lines.append(r"& (l\,b) & (J2000) & (J2000) & (kpc) & ref. & "
+                 r"($10^4\,L_\odot$) & ref. & (km\,s$^{-1}$) & ref.}")
     lines.append(r"\startdata")
     for r in rows:
-        n_alma = len(r["codes"])
         lines.append(
-            f"{r['name']} & {r['ra']} & {r['dec']} & "
-            f"{r['d']:.2f} & {r['dref']} & "
+            f"{r['common']} & {r['gname']} & {r['ra']} & {r['dec']} & "
+            f"{r['d_str']} & {r['dref']} & "
             f"{r['lbol']/1e4:.2f} & {r['lref']} & "
-            f"{r['v_lsr']} & {r['vref']} & "
-            f"{n_alma if n_alma > 0 else r'\nodata'} \\\\"
+            f"{r['v_lsr']} & {r['vref']} \\\\"
         )
     lines.append(r"\enddata")
     # Numbered citet references
@@ -290,8 +389,15 @@ def main():
     rows_with_codes = [r for r in rows if r["codes"]]
     rows_no_codes = [r for r in rows if not r["codes"]]
     for r in rows_with_codes:
-        codes_str = ", ".join(r["codes"])
-        lines.append(f"{r['name']} & {codes_str} \\\\")
+        def _fmt_res(arcsec):
+            # Use 3 sig figs; "0.05" for 0.045, "0.5" for 0.49, etc.
+            if arcsec >= 0.1:
+                return f"{arcsec:.2f}"
+            return f"{arcsec:.3f}"
+        codes_str = ", ".join(
+            f"{c}\\,({_fmt_res(res)}\\arcsec)" for c, res in r["per_code"]
+        )
+        lines.append(f"{r['common']} & {codes_str} \\\\")
     lines.append(r"\enddata")
     lines.append(r"\end{deluxetable*}")
 
@@ -299,21 +405,27 @@ def main():
     if rows_no_codes:
         lines.append(r"")
         lines.append(r"\startlongtable")
-        lines.append(r"\begin{deluxetable}{lcccc}")
+        lines.append(r"\begin{deluxetable}{llccccl}")
         lines.append(r"\tabletypesize{\scriptsize}")
         lines.append(r"\tablecaption{Sample sources with no ALMA observations "
                      r"reaching $<500$\,AU resolution at the source distance. "
                      r"These targets are excluded from the salt-search analysis "
                      r"but listed here for completeness.\label{tab:targets_noalma}}")
-        lines.append(r"\tablehead{\colhead{Source} & \colhead{R.A.} & "
-                     r"\colhead{Dec.} & \colhead{$d$} & "
-                     r"\colhead{$L_\mathrm{bol}$} \\")
-        lines.append(r"& (J2000) & (J2000) & (kpc) & ($10^4\,L_\odot$) }")
+        lines.append(r"\tablehead{\colhead{Source} & \colhead{Galactic} & "
+                     r"\colhead{R.A.} & \colhead{Dec.} & "
+                     r"\colhead{$d$} & \colhead{$L_\mathrm{bol}$} & "
+                     r"\colhead{Reason} \\")
+        lines.append(r"& (l\,b) & (J2000) & (J2000) & (kpc) & "
+                     r"($10^4\,L_\odot$) & }")
         lines.append(r"\startdata")
         for r in rows_no_codes:
+            if r["n_obs_total"] == 0 or r["best_res_au"] is None:
+                reason = "No obs"
+            else:
+                reason = f"best res {r['best_res_au']:.0f}\\,AU"
             lines.append(
-                f"{r['name']} & {r['ra']} & {r['dec']} & "
-                f"{r['d']:.2f} & {r['lbol']/1e4:.2f} \\\\"
+                f"{r['common']} & {r['gname']} & {r['ra']} & {r['dec']} & "
+                f"{r['d_str']} & {r['lbol']/1e4:.2f} & {reason} \\\\"
             )
         lines.append(r"\enddata")
         lines.append(r"\end{deluxetable}")

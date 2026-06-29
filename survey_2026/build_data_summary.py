@@ -277,6 +277,13 @@ def detections_at_brightest(proposal_dir: Path, bid: int):
 
 def collect():
     src = pd.read_csv(SRC_CSV)
+    lit_path = ROOT / "data/literature_detections.csv"
+    lit_targets = set()
+    if lit_path.exists():
+        try:
+            lit_targets = set(pd.read_csv(lit_path)["target"].astype(str))
+        except (KeyError, pd.errors.EmptyDataError):
+            lit_targets = set()
 
     # collect per-target best (target, proposal) by analysis_products
     rows = []
@@ -284,6 +291,7 @@ def collect():
         name = r["name"]
         iras = field_label(name, r.get("alma_target_names", ""))
         dist = r["dist_kpc"]
+        merged_src_pre = source_label(name, 1, r.get("alma_target_names", ""), 1)
         # any analysis_products subdir for this target?
         adirs = sorted((ANALYSIS / name).glob("2*")) if (ANALYSIS / name).is_dir() else []
         # Pick the proposal with the most lines detected at its own brightest
@@ -307,11 +315,30 @@ def collect():
                 best_key = (n_det, theta_au)
                 best = (ad, bid, beam_arcsec, theta_au)
         if best is None:
+            # No analysis_products: decide between
+            #   (a) target listed in Table 3 (no ALMA <500 AU) → omit entirely
+            #   (b) target has literature detection → omit, table covered by
+            #       detections.tex / per_target_paper.tex
+            #   (c) data exist on disk but pipeline not yet run → emit TODO
+            n_proposals_500au = 0
+            alma_props = str(r.get("alma_proposals", "") or "")
+            if alma_props and alma_props != "nan":
+                # rough proxy for "we have <500AU data" — best_res_arcsec * dist
+                br = r.get("best_res_arcsec")
+                if pd.notna(br) and br * dist * 1000.0 < 500.0:
+                    n_proposals_500au = 1
+            in_lit = name in lit_targets
+            if n_proposals_500au == 0 or in_lit:
+                # Skipping rather than emitting "(no data)". User: noalma table
+                # is the place to declare absence; lit-only sources go to
+                # detections.tex/per_target table.
+                continue
             rows.append(dict(
-                source=iras + " (no data)", theta_au=TODO,
-                sigma_native=TODO, sigma_200au=TODO, sigma_200au_10kms=TODO,
-                f5sig=TODO, vwidth=TODO, d=f"{dist:.2f}",
-                rrl=WIP, salt=WIP, com=TODO,
+                source=merged_src_pre,
+                theta_au=TODO, sigma_native=TODO, sigma_200au=TODO,
+                sigma_200au_10kms=TODO, f5sig=TODO, vwidth=TODO,
+                d=f"{dist:.2f}",
+                rrl=WIP, salt=WIP, com=WIP,
             ))
             continue
         ad, bid, beam_arcsec, theta_au = best

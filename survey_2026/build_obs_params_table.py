@@ -67,9 +67,11 @@ def iras_for(name, alt):
 
 
 def field_label(name, alt):
+    """Compact field display name for Table 5.
+    Preference: IRAS shorthand if known, else the bare target name."""
     iras = iras_for(name, alt)
     if iras and iras != name:
-        return f"{name}, {iras}"
+        return iras
     return name
 
 
@@ -347,8 +349,32 @@ def fmt_cell(peak, integ, status):
     return r"\nodata"
 
 
+def lit_ref_to_num(text, citet_map, footnotes):
+    """Replace 'lit: <free text>' with 'lit$^{[N]}$' and register the
+    free-text reference in footnotes/citet_map."""
+    if not text or not text.startswith("lit:"):
+        return text
+    raw = text[4:].strip()
+    if not raw:
+        return "lit"
+    # Escape LaTeX-special chars before storing in footnote
+    safe = raw
+    for ch, esc in [("&", r"\&"), ("_", r"\_"), ("%", r"\%"),
+                     ("#", r"\#"), ("~", r"$\sim$")]:
+        safe = safe.replace(ch, esc)
+    if safe in citet_map:
+        n = citet_map[safe]
+    else:
+        n = len(citet_map) + 1
+        citet_map[safe] = n
+        footnotes[n] = safe
+    return rf"lit$^{{[{n}]}}$"
+
+
 def write_tex(df):
     df = df.sort_values("name")
+    citet_map = {}
+    footnotes = {}
     out = []
     out.append(r"\startlongtable")
     out.append(r"\begin{deluxetable}{lcccccccc}")
@@ -377,11 +403,7 @@ def write_tex(df):
         field = str(r["field"]).replace("_", r"\_")
         ref_raw = str(r["vref_line"])
         if ref_raw.startswith("lit:"):
-            txt = ref_raw[4:].strip()
-            for ch, esc in [("&", r"\&"), ("_", r"\_"), ("%", r"\%"),
-                             ("#", r"\#")]:
-                txt = txt.replace(ch, esc)
-            ref = "lit: " + txt
+            ref = lit_ref_to_num(ref_raw, citet_map, footnotes)
         elif ref_raw:
             ref = latex_line(ref_raw)
         else:
@@ -396,6 +418,9 @@ def write_tex(df):
             f"{v_str} & {ref} & {rrl} & {h2o} & {nacl} \\\\"
         )
     out.append(r"\enddata")
+    if footnotes:
+        ref_strs = [rf"[{n}] {footnotes[n]}" for n in sorted(footnotes)]
+        out.append(r"\tablerefs{" + "; ".join(ref_strs) + "}")
     out.append(r"\end{deluxetable}")
     OUT_TEX.write_text("\n".join(out) + "\n")
 

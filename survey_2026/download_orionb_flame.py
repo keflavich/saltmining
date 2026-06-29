@@ -13,9 +13,9 @@ import numpy as np
 OUTDIR = Path("/orange/adamginsburg/salt/survey_2026/uvdata/2017.1.01102.S/OrionB-Flame")
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
-TARGET_RA = 85.42917
-TARGET_DEC = -1.84167
-SEARCH_RAD_ARCSEC = 60.0
+TARGET_RA = 85.4188
+TARGET_DEC = -1.9045
+SEARCH_RAD_ARCSEC = 600.0
 
 
 def main():
@@ -40,19 +40,24 @@ def main():
     for uid in uids:
         print(f"    {uid}", flush=True)
 
-    # Download the data
-    try:
-        urls = Alma.get_data_info(uids, expand_tarfiles=True)
-    except (ConnectionError, OSError, ValueError) as e:
-        print(f"  url fetch err: {e}", flush=True)
+    # Download the data — retry on 502 / proxy errors
+    import time as _t
+    for attempt in range(5):
+        try:
+            urls = Alma.get_data_info(uids, expand_tarfiles=True)
+            break
+        except Exception as e:
+            print(f"  attempt {attempt+1}: url fetch err: {e}", flush=True)
+            if attempt < 4:
+                _t.sleep(30)
+    else:
+        print(f"  giving up after 5 attempts", flush=True)
         return
     print(f"  {len(urls)} files to fetch", flush=True)
-    # Filter to pbcor + mfs / cube fits
     keep_urls = [u for u in urls["access_url"]
                  if (".pbcor.fits" in u and ("cube" in u or "cont" in u))]
     print(f"  filtered: {len(keep_urls)} pbcor fits files", flush=True)
     Alma.cache_location = str(OUTDIR)
-    # Use download_files
     if keep_urls:
         files = Alma.download_files(keep_urls, savedir=str(OUTDIR),
                                        continuation=True)

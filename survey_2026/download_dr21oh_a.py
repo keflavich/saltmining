@@ -17,7 +17,7 @@ PROPS = ["2019.1.00263.S"]
 DEST_NAME = "G081.6802+00.5405A"
 NAMES = ["DR21(OH)", "DR21OH", "DR21_OH", "G081.682+0.541",
           "G081.682+00.541", "G81.683+00.541", "DR21OH", "DR_21_OH",
-          "DR21(OH) North"]
+          "DR21(OH) North", "DR21", "DR21_DF1"]
 
 SCI = re.compile(r"_sci\..*\.(cube|mfs|cont)(\.[a-z]+)?\.I\.pbcor\.fits$",
                   re.IGNORECASE)

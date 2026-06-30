@@ -130,8 +130,9 @@ _KEEP_PATTERNS = ("NaCl", "KCl", "Na37Cl", "K37Cl", "H2O",
                   "SiO", "29SiO", "SiS", "SO_", "SO2",
                   "H30alpha", "H29alpha", "H26alpha", "H37beta", "H42alpha",
                   "CO_2-1", "13CO", "C18O", "CO-18", "12CO",
-                  "CH3OH_", "CH3CN", "OCS", "HC3N", "H2CO303-202",
-                  "CH3OCHO", "HC(O)NH2")
+                  "CH3OH_", "CH3CN", "OCS", "HC3N",
+                  "H2CO",  # was "H2CO303-202" (literal); now matches all H2CO
+                  "CH3OCHO", "HC(O)NH2", "13CS", "CS_5-4", "13CN")
 
 
 def _line_is_important(name):

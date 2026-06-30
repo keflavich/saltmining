@@ -46,7 +46,8 @@ IRAS_OVERRIDE = {
     "OrionB-Flame":       "I05393",
     "NGC6334I":           "I17175",
     "NGC6334IN":          "I17175N",
-    "MonR2-IRS3":         "I06059",
+    "MonR2-IRS3":         "I06052",
+    "MonR2-IRS2":         "I06052",
     "Lagoon-Her36":       "I18004",
     "NGC6514":            "I17590",
     "S140-IRS1":          "I22176",
@@ -82,22 +83,51 @@ def field_label(name: str, alt_names: str) -> str:
 
 
 # Per-target lit mm/SMA names keyed by (target, src_id).
+# WARNING: src_id mapping varies by proposal; prefer CANONICAL_MM_COORDS
+# (position-based) for multi-core sources.
 LIT_MM_NAME = {
-    ("NGC6334I", 5):     "NGC6334I-MM1B",
-    ("NGC6334I", 4):     "NGC6334I-MM1D",
-    ("NGC6334I", 6):     "NGC6334I-MM1C",
-    ("NGC6334I", 7):     "NGC6334I-MM1A",
-    ("NGC6334I", 2):     "NGC6334I-MM2",
-    ("NGC6334I", 1):     "NGC6334I-MM3",
-    ("NGC6334IN", 1):    "NGC6334IN-SMA6",
     ("I16547-4247", 1):  "I16547A",
     ("I16547-4247", 2):  "I16547B",
     ("Orion-SrcI", 1):   "Orion-SrcI",
     ("Orion-BN", 1):     "Orion-BN",
     ("OrionBN", 1):      "Orion-BN",
     ("MonR2-IRS3", 1):   "MonR2-IRS3",
-    ("MonR2-IRS2", 1):   "MonR2-IRS2-A",
+    ("MonR2-IRS2", 1):   "MonR2-IRS2",
 }
+
+# Position-based canonical mm/SMA labels: target -> [(label, ra_deg, dec_deg, tol_arcsec)].
+# When the brightest mm source in the analyzed proposal falls within tol of
+# one of these positions, the source is labeled with that literature name.
+CANONICAL_MM_COORDS = {
+    "NGC6334I": [
+        ("NGC6334I-MM1B", 260.22257, -35.78274, 0.5),
+        ("NGC6334I-MM1D", 260.22270, -35.78284, 0.5),
+        ("NGC6334I-MM1A", 260.22264, -35.78250, 0.5),
+        ("NGC6334I-MM1C", 260.22260, -35.78262, 0.5),
+        ("NGC6334I-MM2",  260.22126, -35.78427, 1.0),
+        ("NGC6334I-MM3",  260.22243, -35.75109, 1.0),
+    ],
+    "NGC6334IN": [
+        ("NGC6334I(N)-SMA6", 260.21796, -35.75476, 1.0),
+        ("NGC6334I(N)-SMA1", 260.21804, -35.75517, 1.0),
+        ("NGC6334I(N)-SMA2", 260.21788, -35.75539, 1.0),
+        ("NGC6334I(N)-SMA4", 260.21788, -35.75488, 1.0),
+    ],
+}
+
+
+def canonical_mm_label_for(target: str, ra_deg: float, dec_deg: float):
+    """Match a (target, ra, dec) to a CANONICAL_MM_COORDS entry; return label
+    or None."""
+    coords = CANONICAL_MM_COORDS.get(target)
+    if not coords:
+        return None
+    for label, lit_ra, lit_dec, tol_arcsec in coords:
+        dra = (ra_deg - lit_ra) * np.cos(np.radians(dec_deg)) * 3600.0
+        ddec = (dec_deg - lit_dec) * 3600.0
+        if (dra * dra + ddec * ddec) ** 0.5 <= tol_arcsec:
+            return label
+    return None
 
 
 def short_handle(name: str, alt_names: str) -> str:
@@ -110,24 +140,26 @@ def short_handle(name: str, alt_names: str) -> str:
     return name
 
 
+_LIT_MM_SUFFIX_RE = re.compile(r"(?i)(?:-mm[0-9a-z]+|\(N\)-SMA[0-9]+|-IRS[0-9]+|-BN|-SrcI|/IRS[0-9]+|-A|-B|-C)$")
+
+
 def source_label(target: str, src_id: int, alt_names: str,
                   brightness_rank: int) -> str:
     """Merged Source identifier for the data-summary table.
-    Priority: literature mm name → common name + mm{rank} → IRASmm{rank}
-    → targetmm{rank}. Common names come from build_target_table.COMMON_NAME.
-    Examples: NGC6334I src05 → NGC6334I-MM1B; OrionB-Flame src01 →
-    NGC 2024 (Flame)mm1; G268.4222-00.8490 src01 → I09002mm1.
+    Priority: literature mm name → common name (+ mm{rank} if name doesn't
+    already encode a mm/component suffix) → IRASmm{rank} → targetmm{rank}.
     """
     key = (target, int(src_id))
     if key in LIT_MM_NAME:
         return LIT_MM_NAME[key]
-    # Prefer common name if known
     try:
         from build_target_table import COMMON_NAME
     except ImportError:
         COMMON_NAME = {}
     common = COMMON_NAME.get(target)
-    if common and common != target:
+    if common:
+        if _LIT_MM_SUFFIX_RE.search(common):
+            return common if brightness_rank == 1 else f"{common}-mm{brightness_rank}"
         return f"{common}-mm{brightness_rank}"
     handle = short_handle(target, alt_names)
     return f"{handle}mm{brightness_rank}"
@@ -260,9 +292,9 @@ def vwidth_for(proposal_dir: Path, bid: int):
 
 
 def detections_at_brightest(proposal_dir: Path, bid: int):
-    """Return dict with rrl, salt, com booleans evaluated AT the brightest
-    mm continuum source (snr >= 5 at source==bid). Returns None if measurements
-    are missing.
+    """Return dict with rrl, nacl, kcl, h2o, com booleans evaluated AT the
+    brightest mm continuum source (snr >= 5 at source==bid). Returns None if
+    measurements are missing.
     """
     csv = proposal_dir / "line_measurements.csv"
     if not csv.exists():
@@ -277,28 +309,87 @@ def detections_at_brightest(proposal_dir: Path, bid: int):
     rrl = bool(sub[(sub["group"] == "RRL")
                    | sub["line"].astype(str).str.match(r"^H\d+(alpha|beta|gamma|delta)$")
                    ].shape[0])
-    salt = bool(sub[sub["group"].isin(["NaCl", "KCl", "H2O"])].shape[0])
+    nacl = bool(sub[sub["group"] == "NaCl"].shape[0])
+    kcl = bool(sub[sub["group"] == "KCl"].shape[0])
+    h2o = bool(sub[sub["group"] == "H2O"].shape[0])
     com_pat = re.compile(r"^(CH3OH|CH3CN|HC3N|CH3OCHO|C2H5CN|CH3OCH3|NH2CHO|HCOOH|HNCO)",
                          re.IGNORECASE)
     com = bool(sub[sub["line"].astype(str).apply(lambda L: bool(com_pat.match(L)))].shape[0])
-    return dict(rrl=rrl, salt=salt, com=com)
+    return dict(rrl=rrl, nacl=nacl, kcl=kcl, h2o=h2o, com=com)
+
+
+SPECIES_LIT = ["NaCl", "KCl", "H2O", "SiO", "SiS", "SO", "COM", "RRL"]
+
+
+def load_lit_refs():
+    """Return {target: {ref: str, species_kind: {NaCl: det/ul/tent/na, ...}}}.
+    Only targets with at least one 'det' or 'tent' species are returned.
+    Adds underscore-/hyphen-swapped aliases so name spellings in sources CSV
+    that differ from lit CSV still resolve."""
+    lit_path = ROOT / "data/literature_detections.csv"
+    if not lit_path.exists():
+        return {}
+    try:
+        df = pd.read_csv(lit_path)
+    except pd.errors.EmptyDataError:
+        return {}
+    out = {}
+    for _, r in df.iterrows():
+        target = str(r["target"])
+        kinds = {s: str(r.get(f"{s}_kind", "") or "").strip().lower()
+                  for s in SPECIES_LIT}
+        if any(v in ("det", "tent") for v in kinds.values()):
+            entry = dict(ref=str(r["reference"]), species_kind=kinds)
+            out[target] = entry
+            for alias in (target.replace("-", "_"), target.replace("_", "-")):
+                if alias != target:
+                    out.setdefault(alias, entry)
+    return out
+
+
+def apply_lit_override(species_key, mine_bool, lit_kinds):
+    """Merge pipeline boolean with literature kind into a cell string.
+    species_key: lit-side species name (NaCl/KCl/H2O/COM).
+    mine_bool : True if our pipeline detects this species at bid.
+    lit_kinds : dict from load_lit_refs entry, or {}.
+    Returns one of: 'y', 'y?', 'n', '\\nodata'.
+    """
+    lit_kind = lit_kinds.get(species_key, "") if lit_kinds else ""
+    if mine_bool:
+        return "y"
+    if lit_kind == "det":
+        return r"y$^L$"
+    if lit_kind == "tent":
+        return r"y?$^L$"
+    if lit_kind == "ul":
+        return "n"
+    if lit_kind == "na":
+        return r"\nodata"
+    return "n"
+
+
+def _continuum_row(cont_csv: Path, src_id: int):
+    if not cont_csv.exists() or cont_csv.stat().st_size == 0:
+        return None
+    try:
+        df = pd.read_csv(cont_csv)
+    except pd.errors.EmptyDataError:
+        return None
+    hit = df[df["id"] == src_id]
+    if hit.empty:
+        return None
+    return hit.iloc[0]
 
 
 def collect():
     src = pd.read_csv(SRC_CSV)
-    lit_path = ROOT / "data/literature_detections.csv"
-    lit_targets = set()
-    if lit_path.exists():
-        try:
-            lit_targets = set(pd.read_csv(lit_path)["target"].astype(str))
-        except (KeyError, pd.errors.EmptyDataError):
-            lit_targets = set()
+    lit_refs = load_lit_refs()
 
     # collect per-target best (target, proposal) by analysis_products
     rows = []
+    seen_labels = set()
     for _, r in src.iterrows():
         name = r["name"]
-        iras = field_label(name, r.get("alma_target_names", ""))
         dist = r["dist_kpc"]
         merged_src_pre = source_label(name, 1, r.get("alma_target_names", ""), 1)
         # any analysis_products subdir for this target?
@@ -313,10 +404,13 @@ def collect():
                 continue
             beam_arcsec = beam_for_proposal(ad)
             theta_au = beam_arcsec * dist * 1000.0 if beam_arcsec else np.inf
+            # Skip proposals whose resolution doesn't meet the <500 AU bar.
+            if theta_au and np.isfinite(theta_au) and theta_au > 500.0:
+                continue
             det = detections_at_brightest(ad, bid)
             n_det = 0
             if det is not None:
-                n_det = sum(int(det[k]) for k in ("rrl", "salt", "com"))
+                n_det = sum(int(det[k]) for k in ("rrl", "nacl", "kcl", "h2o", "com"))
             # maximize n_det, then minimize theta_au
             key = (n_det, -theta_au)
             best_key_val = (best_key[0], -best_key[1])
@@ -338,38 +432,54 @@ def collect():
                             continue
                         beam_arcsec = beam_for_proposal(ad)
                         theta_au = beam_arcsec * dist * 1000.0 if beam_arcsec else np.inf
+                        if theta_au and np.isfinite(theta_au) and theta_au > 500.0:
+                            continue
                         det = detections_at_brightest(ad, bid)
-                        n_det = sum(int(det[k]) for k in ("rrl","salt","com")) if det else 0
+                        n_det = sum(int(det[k]) for k in ("rrl","nacl","kcl","h2o","com")) if det else 0
                         if (n_det, -theta_au) > (best_key[0], -best_key[1]):
                             best_key = (n_det, theta_au)
                             best = (ad, bid, beam_arcsec, theta_au)
                     break
         if best is None:
-            # Still nothing: decide between
-            #   (a) target listed in Table 3 (no ALMA <500 AU) → omit entirely
-            #   (b) data exist on disk but pipeline not yet run → emit TODO
-            n_proposals_500au = 0
-            alma_props = str(r.get("alma_proposals", "") or "")
-            if alma_props and alma_props != "nan":
-                br = r.get("best_res_arcsec")
-                if pd.notna(br) and br * dist * 1000.0 < 500.0:
-                    n_proposals_500au = 1
-            if n_proposals_500au == 0:
+            # Still nothing on disk. If lit reports a detection for this target
+            # AND the source meets the <500 AU resolution requirement, emit a
+            # lit-only WIP row. Else skip.
+            lit_kinds = lit_refs.get(name, {}).get("species_kind", {})
+            has_lit_det = any(v in ("det", "tent") for v in lit_kinds.values())
+            br = r.get("best_res_arcsec")
+            has_500au = pd.notna(br) and br * dist * 1000.0 < 500.0
+            if not (has_lit_det or has_500au):
                 continue
+            if merged_src_pre in seen_labels:
+                continue
+            seen_labels.add(merged_src_pre)
             rows.append(dict(
+                target=name,
                 source=merged_src_pre,
                 theta_au=TODO, sigma_native=TODO, sigma_200au=TODO,
-                sigma_200au_10kms=TODO, f5sig=TODO, vwidth=TODO,
+                sigma_200au_10kms=TODO, f5sig=TODO,
                 d=f"{dist:.2f}",
-                rrl=WIP, salt=WIP, com=WIP,
+                rrl=WIP, nacl=WIP, kcl=WIP, h2o=WIP, com=WIP,
+                lit_kinds=lit_kinds,
             ))
             continue
         ad, bid, beam_arcsec, theta_au = best
+        # Position-based canonical mm label override (NGC6334I etc.)
+        crow = _continuum_row(ad / "continuum_sources.csv", bid)
+        canon_label = None
+        if crow is not None and "ra_deg" in crow.index:
+            canon_label = canonical_mm_label_for(
+                name, float(crow["ra_deg"]), float(crow["dec_deg"]))
         rmap = brightness_rank_map(ad / "continuum_sources.csv")
         rank = rmap.get(int(bid), 1)
-        merged_src = source_label(name, bid, r.get("alma_target_names", ""), rank)
+        merged_src = canon_label or source_label(
+            name, bid, r.get("alma_target_names", ""), rank)
+        # Dedupe: skip if label already emitted (e.g. two distinct G... targets
+        # mapped to the same shorthand). The first occurrence wins.
+        if merged_src in seen_labels:
+            continue
+        seen_labels.add(merged_src)
         sigma_nat, dv_nat = native_noise_for(ad, bid)
-        vw = vwidth_for(ad, bid)
         if theta_au and np.isfinite(theta_au) and sigma_nat:
             if theta_au < 200.0:
                 sigma_200 = sigma_nat * (theta_au / 200.0) ** 2
@@ -383,11 +493,14 @@ def collect():
             sigma_200 = None
             sigma_200_10 = None
         det = detections_at_brightest(ad, bid)
-        rrl = "y" if (det and det["rrl"]) else "n"
-        salt = "y" if (det and det["salt"]) else "n"
-        com = "y" if (det and det["com"]) else "n"
         if det is None:
-            rrl = salt = com = WIP
+            rrl = nacl = kcl = h2o = com = WIP
+        else:
+            rrl = "y" if det["rrl"] else "n"
+            nacl = "y" if det["nacl"] else "n"
+            kcl = "y" if det["kcl"] else "n"
+            h2o = "y" if det["h2o"] else "n"
+            com = "y" if det["com"] else "n"
         # aux: confusion fraction
         f5_str = TODO
         if (ROOT / "data/data_summary_aux.csv").exists():
@@ -400,7 +513,9 @@ def collect():
                         com = "y?"
             except pd.errors.EmptyDataError:
                 pass
+        lit_kinds = lit_refs.get(name, {}).get("species_kind", {})
         rows.append(dict(
+            target=name,
             source=merged_src,
             theta_au=f"{theta_au:.0f}" if (theta_au and np.isfinite(theta_au)) else TODO,
             sigma_native=f"{sigma_nat*1000.0:.1f}" if sigma_nat else TODO,
@@ -408,23 +523,70 @@ def collect():
             sigma_200au_10kms=f"{sigma_200_10*1000.0:.2f}" if sigma_200_10 else TODO,
             f5sig=f5_str,
             d=f"{dist:.2f}",
-            rrl=rrl, salt=salt, com=com,
+            rrl=rrl, nacl=nacl, kcl=kcl, h2o=h2o, com=com,
+            lit_kinds=lit_kinds,
         ))
     return pd.DataFrame(rows)
 
 
+def _latex_escape(s: str) -> str:
+    return s.replace("&", r"\&").replace("_", r"\_").replace("%", r"\%")
+
+
+def _classify_footnote(row, lit_refs):
+    """Return (mark, ref_text or None).
+    mark = 'a','b',... assigned via fn_map below if target has a lit detection;
+    mark = '*' for new-this-work (any pipeline detection AND no lit-det);
+    mark = None for non-detection / no information.
+    """
+    tgt = row["target"]
+    lit_kinds = row.get("lit_kinds", {}) or {}
+    has_lit_det = any(v in ("det", "tent") for v in lit_kinds.values())
+    pipeline_det = any(row.get(k) == "y" for k in ("nacl", "kcl", "h2o", "com"))
+    if has_lit_det:
+        return ("lit", lit_refs.get(tgt, {}).get("ref", ""))
+    if pipeline_det:
+        return ("new", None)
+    return (None, None)
+
+
+def _merge_cell(species_key, mine, lit_kinds):
+    """Merge per-species mine ('y'/'n'/WIP/TODO) with lit kind into final cell."""
+    if mine in (WIP, TODO):
+        return mine
+    lit_kind = (lit_kinds or {}).get(species_key, "")
+    if mine == "y":
+        return "y"
+    if lit_kind == "det":
+        return r"y$^L$"
+    if lit_kind == "tent":
+        return r"y?$^L$"
+    if lit_kind == "na":
+        return r"\nodata"
+    # default ('ul' or absent) -> show pipeline value
+    return mine
+
+
 def write_tex(df: pd.DataFrame):
+    lit_refs = load_lit_refs()
+    # Assign footnote letters to lit-references (in order of first appearance).
+    fn_letter = {}
+    star_used = False
     out = []
     out.append(r"\startlongtable")
-    out.append(r"\begin{deluxetable}{lcccccccccc}")
+    out.append(r"\begin{deluxetable}{lccccccccccc}")
     out.append(r"\tabletypesize{\scriptsize}")
     out.append(r"\tablecaption{Observation summary and detection inventory across the "
                r"full target sample. Beam in AU at the source distance, $\sigma$ in mK. "
-               r"Detection columns: y = $\geq 5\sigma$, n = non-detection, "
-               r"\textsc{wip}\ = analysis in progress. Source identifier is the "
-               r"literature mm/SMA name when known, else "
-               r"\texttt{<IRAS>mm<rank>}, ranking by mm peak brightness within "
-               r"the field.\label{tab:obs}}")
+               r"Detection columns: y = $\geq 5\sigma$ in our pipeline; "
+               r"y$^L$ = literature detection (no pipeline coverage / below "
+               r"$5\sigma$ here); n = non-detection; "
+               r"\textsc{wip}\ = analysis in progress; \nodata\ = species not in band. "
+               r"Source identifier is the literature mm/SMA name (matched by "
+               r"position) when known, else \texttt{<common-name>-mm<rank>}, "
+               r"ranking by mm peak brightness within the field. "
+               r"Source-name footnotes link to first-detection references; "
+               r"$^*$ marks first detection reported in this work.\label{tab:obs}}")
     out.append(r"\tablehead{")
     out.append(r"\colhead{Source} & "
                r"\colhead{$\theta_\mathrm{maj}$} & "
@@ -433,16 +595,33 @@ def write_tex(df: pd.DataFrame):
                r"\colhead{$\sigma_{200,10}$} & "
                r"\colhead{$f({>}5\sigma)$} & "
                r"\colhead{$d$} & "
-               r"\colhead{RRL} & \colhead{NaCl/} & \colhead{KCl} & \colhead{COM} \\")
-    out.append(r" & (AU) & (mK) & (mK) & (mK) & & (kpc) & & H$_2$O & & }")
+               r"\colhead{RRL} & \colhead{NaCl} & \colhead{KCl} & "
+               r"\colhead{H$_2$O} & \colhead{COM} \\")
+    out.append(r" & (AU) & (mK) & (mK) & (mK) & & (kpc) & & & & 232 & }")
     out.append(r"\startdata")
     for _, r in df.iterrows():
+        kind, ref = _classify_footnote(r, lit_refs)
+        mark = ""
+        if kind == "lit":
+            tgt = r["target"]
+            if tgt not in fn_letter:
+                fn_letter[tgt] = chr(ord('a') + len(fn_letter))
+            mark = f"\\tablenotemark{{{fn_letter[tgt]}}}"
+        elif kind == "new":
+            mark = r"\tablenotemark{*}"
+            star_used = True
+        src_disp = _latex_escape(str(r["source"])) + mark
+        lit_k = r.get("lit_kinds", {}) or {}
+        nacl = _merge_cell("NaCl", r["nacl"], lit_k)
+        kcl  = _merge_cell("KCl",  r["kcl"],  lit_k)
+        h2o  = _merge_cell("H2O",  r["h2o"],  lit_k)
+        com  = _merge_cell("COM",  r["com"],  lit_k)
         out.append(
-            f"{r['source'].replace('_', r'\\_')} & "
+            f"{src_disp} & "
             f"{r['theta_au']} & {r['sigma_native']} & "
             f"{r['sigma_200au']} & {r['sigma_200au_10kms']} & "
             f"{r['f5sig']} & {r['d']} & "
-            f"{r['rrl']} & {r['salt']} & n & {r['com']} \\\\"
+            f"{r['rrl']} & {nacl} & {kcl} & {h2o} & {com} \\\\"
         )
     out.append(r"\enddata")
     out.append(r"\tablecomments{$\sigma_\mathrm{nat}$ is the per-channel noise at the "
@@ -454,6 +633,12 @@ def write_tex(df: pd.DataFrame):
                r"after smoothing to a $10$\,\kms\ channel. $f({>}5\sigma)$ is the "
                r"fraction of channels above five times the field's robust noise; a high "
                r"value indicates line confusion.}")
+    # Footnote entries: literature references and the * (new detection) tag.
+    for tgt, letter in sorted(fn_letter.items(), key=lambda kv: kv[1]):
+        ref = _latex_escape(lit_refs.get(tgt, {}).get("ref", ""))
+        out.append(rf"\tablenotetext{{{letter}}}{{First reported by {ref}.}}")
+    if star_used:
+        out.append(r"\tablenotetext{*}{First reported in this work.}")
     out.append(r"\end{deluxetable}")
     OUT_TEX.write_text("\n".join(out) + "\n")
 
@@ -464,7 +649,7 @@ def main():
     write_tex(df)
     print(f"wrote {OUT_TEX}")
     print()
-    print(df[["source", "theta_au", "sigma_native", "rrl", "salt"]]
+    print(df[["source", "theta_au", "sigma_native", "rrl", "nacl", "kcl", "h2o", "com"]]
           .to_string(index=False))
 
 

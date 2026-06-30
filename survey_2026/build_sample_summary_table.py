@@ -228,7 +228,7 @@ def main():
         print(r)
 
     out = []
-    out.append(r"\begin{deluxetable}{lcccccccccc}")
+    out.append(r"\begin{deluxetable}{lccccccccc}")
     out.append(r"\tabletypesize{\footnotesize}")
     out.append(r"\tablecaption{Demographic summary of the L$_\mathrm{bol} \geq 10^4\,L_\odot$ "
                r"HMYSO sample within $d \leq 2$\,kpc and $d \leq 3$\,kpc. "

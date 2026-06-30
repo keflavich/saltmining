@@ -38,39 +38,23 @@ DATA_VLSR = ROOT / "data/vlsr_from_data.json"
 OUT_CSV = ROOT / "data/obs_params.csv"
 OUT_TEX = Path("/orange/adamginsburg/salt/demography_2026/obs_params.tex")
 
-IRAS_OVERRIDE = {
-    "OrionBN-KL":         "I05327",
-    "OrionB-Flame":       "I05393",
-    "NGC6334I":           "I17175",
-    "NGC6334IN":          "I17175N",
-    "MonR2-IRS3":         "I06059",
-    "MonR2-IRS2":         "I06059",
-    "Lagoon-Her36":       "I18004",
-    "NGC6514":            "I17590",
-    "S140-IRS1":          "I22176",
-    "GGD12-15":           "I06084",
-    "IRAS17233-3606":     "I17233",
-    "G353.2+0.9":         "I17220",
-    "G189.0307+00.7821":  "I06056",
-}
 IRAS_RE = re.compile(r"(?:IRAS[ _]*|\bI)([0-9]{5})(?:[+-][0-9]+)?", re.IGNORECASE)
 
 
-def iras_for(name, alt):
-    if name in IRAS_OVERRIDE:
-        return IRAS_OVERRIDE[name]
-    for tok in re.split(r"[;,]", str(alt or "")):
-        m = IRAS_RE.search(tok)
-        if m:
-            return f"I{m.group(1)}"
-    return None
-
-
 def field_label(name, alt):
-    """Compact field display name for Table 5.
-    Preference: IRAS shorthand if known, else the bare target name."""
-    iras = iras_for(name, alt)
-    if iras and iras != name:
+    """Compact field display name for Table 5: prefer COMMON_NAME (so the
+    label matches Tables 1/4), else IRAS shorthand from alma_target_names
+    (so T5 matches T1's `IRAS XXXXX+YYYY` fallback), else the bare target."""
+    try:
+        from build_target_table import COMMON_NAME, alma_target_names_to_iras
+    except ImportError:
+        COMMON_NAME = {}
+        alma_target_names_to_iras = lambda _s: None
+    common = COMMON_NAME.get(name)
+    if common:
+        return common
+    iras = alma_target_names_to_iras(alt)
+    if iras:
         return iras
     return name
 
@@ -149,6 +133,32 @@ def best_proposal(name, dist):
 RRL_RE = re.compile(r"^H\d+(alpha|beta|gamma|delta)$")
 H2O_RE = re.compile(r"^H2O.*232")
 NACL_RE = re.compile(r"^NaCl_")
+KCL_RE = re.compile(r"^KCl_")
+
+
+def load_lit_refs():
+    """Match build_data_summary.load_lit_refs (kept inline to avoid an import
+    cycle); returns {target: {ref, species_kind}} including alias spellings."""
+    lit_path = ROOT / "data/literature_detections.csv"
+    if not lit_path.exists():
+        return {}
+    try:
+        df = pd.read_csv(lit_path)
+    except pd.errors.EmptyDataError:
+        return {}
+    species = ["NaCl", "KCl", "H2O", "SiO", "SiS", "SO", "COM", "RRL"]
+    out = {}
+    for _, r in df.iterrows():
+        target = str(r["target"])
+        kinds = {s: str(r.get(f"{s}_kind", "") or "").strip().lower()
+                  for s in species}
+        if any(v in ("det", "tent") for v in kinds.values()):
+            entry = dict(ref=str(r["reference"]), species_kind=kinds)
+            out[target] = entry
+            for alias in (target.replace("-", "_"), target.replace("_", "-")):
+                if alias != target:
+                    out.setdefault(alias, entry)
+    return out
 
 
 def deg_to_alma_str(ra_deg, dec_deg):
@@ -322,6 +332,7 @@ def collect():
         rrl_peak, rrl_int, rrl_line, _, rrl_status = line_value(meas, bid, RRL_RE, "")
         h2o_peak, h2o_int, h2o_line, _, h2o_status = line_value(meas, bid, H2O_RE, "")
         nacl_peak, nacl_int, nacl_line, _, nacl_status = line_value(meas, bid, NACL_RE, "")
+        kcl_peak, kcl_int, kcl_line, _, kcl_status = line_value(meas, bid, KCL_RE, "")
         rows.append(dict(
             name=name,
             field=field_label(name, r.get("alma_target_names", "")),
@@ -331,22 +342,37 @@ def collect():
             rrl_line=rrl_line, rrl_peak_K=rrl_peak, rrl_int=rrl_int, rrl_status=rrl_status,
             h2o_line=h2o_line, h2o_peak_K=h2o_peak, h2o_int=h2o_int, h2o_status=h2o_status,
             nacl_line=nacl_line, nacl_peak_K=nacl_peak, nacl_int=nacl_int, nacl_status=nacl_status,
+            kcl_line=kcl_line, kcl_peak_K=kcl_peak, kcl_int=kcl_int, kcl_status=kcl_status,
             beam_arcsec=beam_arcsec, source_id=bid,
         ))
+    # Dedupe by (ra, dec, field) within 1": two source-CSV rows that resolve
+    # to the same continuum source (e.g. G336.4917A and G336.4917B both
+    # → I16362) collapse to one table row, keeping the first.
+    if rows:
+        deduped = []
+        seen = []
+        for row in rows:
+            key_ra, key_dec = row["ra"], row["dec"]
+            if any(s == (key_ra, key_dec) for s in seen):
+                continue
+            seen.append((key_ra, key_dec))
+            deduped.append(row)
+        rows = deduped
     return pd.DataFrame(rows)
 
 
-def fmt_cell(peak, integ, status):
-    """One cell: peak in mK (always)."""
+def fmt_cell(peak, integ, status, lit_kind=None, lit_letter=None):
+    """One cell: peak in mK (always). If lit_kind says detection but we
+    have \\nodata or $<\\!3\\sigma$, decorate with the lit footnote marker.
+    """
     if status == "detected":
         if peak is None or not np.isfinite(peak):
             return r"\nodata"
         return f"{peak*1000:.1f}"
-    if status == "covered":
-        return r"$<\!3\sigma$"
-    if status == "no":
-        return r"\nodata"
-    return r"\nodata"
+    base = r"$<\!3\sigma$" if status == "covered" else r"\nodata"
+    if lit_kind in ("det", "tent") and lit_letter:
+        return rf"{base}\,\tablenotemark{{{lit_letter}}}"
+    return base
 
 
 def lit_ref_to_num(text, citet_map, footnotes):
@@ -373,11 +399,14 @@ def lit_ref_to_num(text, citet_map, footnotes):
 
 def write_tex(df):
     df = df.sort_values("name")
+    lit_refs = load_lit_refs()
     citet_map = {}
     footnotes = {}
+    # Literature footnote letters per target (for cells)
+    fn_letter = {}
     out = []
     out.append(r"\startlongtable")
-    out.append(r"\begin{deluxetable}{lcccccccc}")
+    out.append(r"\begin{deluxetable}{lcccccccccc}")
     out.append(r"\tabletypesize{\scriptsize}")
     out.append(r"\tablecaption{Fundamental observational parameters per target. "
                r"Coordinates are the J2000 position of the brightest mm "
@@ -390,14 +419,17 @@ def write_tex(df):
                r"line = `lit: \dots'). Detection cells give peak brightness "
                r"(mK) of the highest-SNR line in the species class. "
                r"$<\!3\sigma$ marks coverage without a $\geq 5\sigma$ detection; "
-               r"\nodata\ marks no spectral coverage of the species.\label{tab:obspars}}")
+               r"\nodata\ marks no spectral coverage of the species. "
+               r"Species-cell footnote markers cite literature detections "
+               r"for which we do not have a re-measured value here.\label{tab:obspars}}")
     out.append(r"\tablehead{")
     out.append(r"\colhead{Field} & \colhead{R.A.} & \colhead{Dec.} & "
                r"\colhead{$\sigma_\mathrm{pos}$} & "
                r"\colhead{$v_\mathrm{LSR}$} & \colhead{Ref.\ line} & "
-               r"\colhead{RRL} & \colhead{H$_2$O\,232} & \colhead{NaCl} \\")
+               r"\colhead{RRL} & \colhead{H$_2$O\,232} & "
+               r"\colhead{NaCl} & \colhead{KCl} \\")
     out.append(r" & (J2000) & (J2000) & ($''$) & (\kms) & & "
-               r"(mK) & (mK) & (mK) }")
+               r"(mK) & (mK) & (mK) & (mK) }")
     out.append(r"\startdata")
     for _, r in df.iterrows():
         field = str(r["field"]).replace("_", r"\_")
@@ -408,19 +440,45 @@ def write_tex(df):
             ref = latex_line(ref_raw)
         else:
             ref = r"\nodata"
-        rrl = fmt_cell(r["rrl_peak_K"], r["rrl_int"], r["rrl_status"])
-        h2o = fmt_cell(r["h2o_peak_K"], r["h2o_int"], r["h2o_status"])
-        nacl = fmt_cell(r["nacl_peak_K"], r["nacl_int"], r["nacl_status"])
+        # Literature footnote letter for this target (if any lit det/tent)
+        tgt = r["name"]
+        lit_entry = lit_refs.get(tgt) or lit_refs.get(tgt.replace("-", "_")) \
+                    or lit_refs.get(tgt.replace("_", "-"))
+        lit_kinds = lit_entry["species_kind"] if lit_entry else {}
+        # Allocate a footnote letter only when at least one species cell will
+        # actually consume it (lit says det/tent AND we have no detection).
+        needs_mark = False
+        for sp, status_col in (("NaCl", "nacl_status"), ("KCl", "kcl_status"),
+                                ("H2O", "h2o_status"), ("RRL", "rrl_status")):
+            if lit_kinds.get(sp) in ("det", "tent") and r[status_col] != "detected":
+                needs_mark = True
+                break
+        lit_letter = None
+        if needs_mark:
+            if tgt not in fn_letter:
+                fn_letter[tgt] = chr(ord('a') + len(fn_letter))
+            lit_letter = fn_letter[tgt]
+        rrl_l = lit_kinds.get("RRL")
+        h2o_l = lit_kinds.get("H2O")
+        nacl_l = lit_kinds.get("NaCl")
+        kcl_l = lit_kinds.get("KCl")
+        rrl = fmt_cell(r["rrl_peak_K"], r["rrl_int"], r["rrl_status"], rrl_l, lit_letter)
+        h2o = fmt_cell(r["h2o_peak_K"], r["h2o_int"], r["h2o_status"], h2o_l, lit_letter)
+        nacl = fmt_cell(r["nacl_peak_K"], r["nacl_int"], r["nacl_status"], nacl_l, lit_letter)
+        kcl = fmt_cell(r["kcl_peak_K"], r["kcl_int"], r["kcl_status"], kcl_l, lit_letter)
         sig_str = f"{r['pos_unc_arcsec']:.3f}" if pd.notna(r["pos_unc_arcsec"]) else r"\nodata"
         v_str = f"{r['vsrc_kms']:+.1f}" if pd.notna(r["vsrc_kms"]) else r"\nodata"
         out.append(
             f"{field} & {r['ra']} & {r['dec']} & {sig_str} & "
-            f"{v_str} & {ref} & {rrl} & {h2o} & {nacl} \\\\"
+            f"{v_str} & {ref} & {rrl} & {h2o} & {nacl} & {kcl} \\\\"
         )
     out.append(r"\enddata")
     if footnotes:
         ref_strs = [rf"[{n}] {footnotes[n]}" for n in sorted(footnotes)]
         out.append(r"\tablerefs{" + "; ".join(ref_strs) + "}")
+    for tgt, letter in sorted(fn_letter.items(), key=lambda kv: kv[1]):
+        ref = lit_refs[tgt]["ref"].replace("&", r"\&").replace("_", r"\_")
+        out.append(rf"\tablenotetext{{{letter}}}{{Literature detection: {ref}.}}")
     out.append(r"\end{deluxetable}")
     OUT_TEX.write_text("\n".join(out) + "\n")
 

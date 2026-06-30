@@ -28,10 +28,17 @@ NAMES = ["IRAS17233-3606", "IRAS_17233-3606", "IRAS_17233_3606",
 
 SCI = re.compile(r"_sci\..*\.(cube|mfs|cont)(\.[a-z]+)?\.I\.pbcor\.fits$",
                   re.IGNORECASE)
+# ALMA encodes the source name (e.g. `IRAS17233`, `G351.77-0.54`) into the
+# delivered filename; we keep only files whose name contains one of these
+# tokens so that multi-target MOUSes don't dump foreign data into our dir.
+TARGET_TOKENS = ["IRAS17233", "IRAS_17233", "G351.77", "I17233"]
 
 
 def keep_url(url):
-    return bool(SCI.search(url.rsplit("/", 1)[-1]))
+    fname = url.rsplit("/", 1)[-1]
+    if not SCI.search(fname):
+        return False
+    return any(tok.lower() in fname.lower() for tok in TARGET_TOKENS)
 
 
 def main():

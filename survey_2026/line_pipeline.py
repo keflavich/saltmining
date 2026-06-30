@@ -114,8 +114,21 @@ def build_line_list(fmin=80.0, fmax=500.0):
 
 
 # ----- Cube utilities -----
+def _fits_getheader_retry(path, attempts=4, delay=2.0):
+    """fits.getheader with retry on transient Lustre/FUSE BrokenPipeError."""
+    import time
+    last_err = None
+    for i in range(attempts):
+        try:
+            return fits.getheader(path)
+        except BrokenPipeError as e:
+            last_err = e
+            time.sleep(delay * (i + 1))
+    raise last_err
+
+
 def cube_freq_range(path):
-    h = fits.getheader(path)
+    h = _fits_getheader_retry(path)
     crv = h.get("CRVAL3", 0); cd = h.get("CDELT3", 0); n = h.get("NAXIS3", 0); crp = h.get("CRPIX3", 1)
     if n == 0 or cd == 0: return None, None
     fmin = (crv + (1-crp)*cd)*1e-9
@@ -713,6 +726,12 @@ def main():
     ap.add_argument("--on-kms", type=float, default=10.0,
                     help="non-RRL line integration half-window (km/s); "
                          "RRLs always use 60 km/s")
+    ap.add_argument("--target-tokens", default="",
+                    help="comma-separated extra filename substrings that "
+                         "identify the right target (e.g. 'I09002-4732' for "
+                         "G268.4222-00.8490). Used when the MOUS contains "
+                         "multiple targets so the pipeline picks the right "
+                         "continuum + cubes.")
     args = ap.parse_args()
 
     srcdir = ROOT / f"uvdata/{args.proposal}/{args.target}"
@@ -724,6 +743,10 @@ def main():
     target_variants = {args.target,
                        args.target.replace("+", "p").replace("-", "m"),
                        args.target.replace("+", "").replace("-", "")}
+    for tok in args.target_tokens.split(","):
+        tok = tok.strip()
+        if tok:
+            target_variants.add(tok)
     def name_matches_target(path):
         nm = path.name.lower()
         return any(v.lower() in nm for v in target_variants)

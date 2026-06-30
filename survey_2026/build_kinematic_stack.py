@@ -147,26 +147,18 @@ def extract_aligned_spectrum(cube_path, src_pix, mom1_kms):
     return f_rest_GHz, spec_K
 
 
-def overlay_lineids(ax, freq_GHz_data, flux_data):
-    try:
-        from lineid_plot import plot_line_ids
-    except ImportError:
-        return
-    fmin, fmax = float(freq_GHz_data.min()), float(freq_GHz_data.max())
-    keep_freqs = []; keep_labels = []
-    for rest, lab in LINELIST:
-        if fmin <= rest <= fmax:
-            keep_freqs.append(rest); keep_labels.append(lab)
-    for n, rest in RRLS.items():
-        if fmin <= rest <= fmax:
-            keep_freqs.append(rest); keep_labels.append(n)
-    if not keep_freqs:
-        return
-    plot_line_ids(np.asarray(freq_GHz_data, dtype=float),
-                   np.asarray(flux_data, dtype=float),
-                   np.array(keep_freqs, dtype=float),
-                   keep_labels, ax=ax,
-                   label1_size=8, extend=False, max_iter=200)
+def overlay_lineids(ax, freq_GHz_data, flux_data, vsys: float = 0.0):
+    """Rest-frame line overlay. After kinematic alignment freq_GHz_data is
+    already rest-frame (vsys=0 default). Uses the shared lineid_style helper
+    so the label style is identical to lineid_full + spectrum_panels."""
+    from analysis.lineid_style import apply_labels
+    fmin = float(freq_GHz_data.min())
+    fmax = float(freq_GHz_data.max())
+    ylim = ax.get_ylim()
+    ymax = float(ylim[1])
+    apply_labels(ax, fmin, fmax, ymax, vsys=vsys,
+                  species=("salt", "h2o", "ism", "rrl"),
+                  arrows=("ch3ocho", "ch3oh"), fontsize=10)
 
 
 def main():
@@ -300,34 +292,42 @@ def main():
     for pi in range(n_pages):
         page = panels[pi * ROWS_PER_PAGE:(pi + 1) * ROWS_PER_PAGE]
         n = len(page)
-        fig, axes = plt.subplots(n, 1, figsize=(18, 2.5 * n + 0.6))
+        # Per-panel height set to 4.0 in (was 2.5) so the line labels lineid_plot
+        # places above each axis don't run into the panel boundary.
+        fig, axes = plt.subplots(n, 1, figsize=(20, 4.0 * n + 1.5))
         if n == 1:
             axes = [axes]
         for ax, p in zip(axes, page):
             freq = p["freq"]; T = p["T"]
             ax.plot(freq, T, "k-", lw=0.6)
-            ax.set_ylabel(f"{p['mous']}\n{p['spw']}\nT (K)", fontsize=7)
-            ax.tick_params(labelsize=8)
+            ax.set_ylabel(f"{p['mous']}\n{p['spw']}\nT (K)", fontsize=10)
+            ax.tick_params(labelsize=10)
             ax.set_xlim(float(freq.min()), float(freq.max()))
             finite = T[np.isfinite(T)]
             if finite.size < 5:
                 continue
             ymin = float(np.nanpercentile(finite, 1))
-            ymax = float(np.nanpercentile(finite, 99)) * 1.15 + 1
+            # Extra headroom (50%) so the rotated lineid labels above the
+            # spectrum trace stay inside the axis.
+            ymax = float(np.nanpercentile(finite, 99)) * 1.5 + 1
             if not (np.isfinite(ymin) and np.isfinite(ymax)) or ymax <= ymin:
                 continue
             ax.set_ylim(ymin, ymax)
             overlay_lineids(ax, freq, T)
-        axes[-1].set_xlabel("rest frequency (GHz, aligned)")
+        axes[-1].set_xlabel("rest frequency (GHz, aligned)", fontsize=12)
         suffix = "" if n_pages == 1 else f"_p{pi+1}"
         fig.suptitle(
-            f"{args.target} src{bid:02d} aligned by {args.guide_line}  "
-            f"(mom1={mom1_g:.1f} km/s, vlsr={args.vlsr:+.1f}"
+            f"{args.target} src{bid:02d}: kinematic stack "
+            f"(aligned by {args.guide_line}, "
+            f"mom1={mom1_g:.1f} km/s, vlsr={args.vlsr:+.1f}"
             f"{f', page {pi+1}/{n_pages}' if n_pages > 1 else ''})",
-            fontsize=10)
-        fig.tight_layout(rect=[0, 0, 1, 0.97])
+            fontsize=13)
+        # Explicit margins instead of tight_layout: avoids bbox_inches="tight"
+        # vertically shrinking the panels.
+        fig.subplots_adjust(left=0.07, right=0.99, top=0.96, bottom=0.04,
+                              hspace=0.45)
         out_png = out_dir / f"aligned_by_{args.guide_line}{suffix}.png"
-        fig.savefig(out_png, dpi=120, bbox_inches="tight")
+        fig.savefig(out_png, dpi=120)
         plt.close(fig)
         print(f"wrote {out_png} ({n} panels)")
 

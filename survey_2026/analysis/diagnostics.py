@@ -257,13 +257,22 @@ def make_lineid_full(cube_paths, outpath, source_name, vcen_kms,
                     continue
                 col = _line_color(lname)
                 ax.axvline(f0, color=col, linestyle=":", linewidth=0.6, alpha=0.7)
-                # vertical text label, top of (clipped) axis
                 _, ytop = ax.get_ylim()
                 ax.text(f0, ytop, _short_name(lname), rotation=90,
-                        color=col, fontsize=7, ha="right", va="top",
+                        color=col, fontsize=8, ha="right", va="top",
                         alpha=0.85)
+        # Extra ISM + COM/CH3OCHO arrows via the shared style helper.
+        try:
+            from analysis.lineid_style import apply_labels
+            _, ytop = ax.get_ylim()
+            apply_labels(ax, f_lo, f_hi, ytop, vsys=vcen_kms,
+                          species=("ism",),
+                          arrows=("ch3ocho", "ch3oh"), fontsize=8)
+        except ImportError:
+            pass
         ax.set_xlim(f_lo, f_hi)
-        ax.set_title(os.path.basename(cp), fontsize=9)
+        ax.set_title(os.path.basename(cp), fontsize=10)
+        ax.tick_params(labelsize=10)
 
     os.makedirs(os.path.dirname(outpath), exist_ok=True)
     pl.tight_layout()

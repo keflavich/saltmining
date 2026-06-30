@@ -114,6 +114,29 @@ def build_line_list(fmin=80.0, fmax=500.0):
 
 
 # ----- Cube utilities -----
+_IRAS_RE = re.compile(r"(?:IRAS[ _]*|\bI)([0-9]{5})", re.IGNORECASE)
+
+
+def _target_handle(target):
+    """Compact target handle used as the filename prefix for per-source
+    outputs: prefer 'I12345' IRAS shorthand from sources_L4_d2 alt names,
+    else a sanitized version of the target name."""
+    src_csv = ROOT / "data/sources_L4_d2.csv"
+    if src_csv.exists():
+        try:
+            df = pd.read_csv(src_csv)
+            row = df[df["name"] == target]
+            if not row.empty and "alma_target_names" in row.columns:
+                alt = str(row.iloc[0]["alma_target_names"] or "")
+                m = _IRAS_RE.search(alt)
+                if m:
+                    return f"I{m.group(1)}"
+        except (pd.errors.EmptyDataError, KeyError, OSError):
+            pass
+    # Sanitize bare target name: keep alnum, +, -, .
+    return re.sub(r"[^A-Za-z0-9+\-.]", "", target.replace(" ", ""))
+
+
 def _fits_getheader_retry(path, attempts=6, delay=5.0):
     """fits.getheader with retry on transient Lustre/FUSE I/O errors."""
     import time
@@ -649,9 +672,22 @@ def stack_salt(rows, sdir, vlsr_kms):
 # ----- Per-source processing -----
 def process_source(src, cubes, lines, outroot, vlsr_kms, distance_kpc, on_kms_default=10.0):
     sid = src["id"]
-    sdir = outroot / f"source_{sid:02d}"
+    # Robust filename label: <handle>mm<rank> avoids cross-proposal collisions
+    # where per-proposal numeric ids point to different physical sources.
+    handle = src.get("handle", f"src{sid:02d}")
+    rank = src.get("rank", sid)
+    label = f"{handle}mm{rank}"
+    sdir = outroot / label
     sdir.mkdir(parents=True, exist_ok=True)
-    print(f"\n=== Source {sid}: ra={src['ra_deg']:.5f} dec={src['dec_deg']:.5f} "
+    # Compatibility shim: ensure a legacy source_NN/ symlink still exists so
+    # CARTA snippets and figure scripts that hardcode source_NN/ don't break.
+    legacy = outroot / f"source_{sid:02d}"
+    if not legacy.exists():
+        try:
+            legacy.symlink_to(label)
+        except OSError:
+            pass
+    print(f"\n=== {label} (id={sid}): ra={src['ra_deg']:.5f} dec={src['dec_deg']:.5f} "
           f"cont={src['peak_Jybeam']:.3g} ({src['snr']:.1f}σ) ===", flush=True)
     rows = []
     lines_by_name = {l["name"]: l for l in lines}
@@ -700,9 +736,9 @@ def process_source(src, cubes, lines, outroot, vlsr_kms, distance_kpc, on_kms_de
                                      on_kms=70.0 if line["group"]=="RRL" else 15.0)
         hdr_m = cutout.wcs.celestial.to_header()
         hdr_m["BUNIT"] = "km/s"
-        fits.PrimaryHDU(m1, hdr_m).writeto(sdir / f"source_{sid:02d}_{line['name']}_mom1.fits", overwrite=True)
+        fits.PrimaryHDU(m1, hdr_m).writeto(sdir / f"{label}_{line['name']}_mom1.fits", overwrite=True)
         hdr0 = hdr_m.copy(); hdr0["BUNIT"] = "Jy/beam km/s"
-        fits.PrimaryHDU(m0, hdr0).writeto(sdir / f"source_{sid:02d}_{line['name']}_mom0.fits", overwrite=True)
+        fits.PrimaryHDU(m0, hdr0).writeto(sdir / f"{label}_{line['name']}_mom0.fits", overwrite=True)
         try:
             plot_line_diagnostic(m, line, sid, sdir, vlsr_kms, cutout)
         except Exception as e:
@@ -813,6 +849,16 @@ def main():
 
     sources, cont_sigma, cont_hdr, cont_data, wcs_cont = find_continuum_sources(cont_path, args.peak_sigma)
     print(f"  {len(sources)} sources >= {args.peak_sigma}σ", flush=True)
+    # Assign a target-prefixed handle + brightness rank to each source so
+    # filenames are unique across proposals. Brightness rank is 1 for the
+    # brightest peak_Jybeam, 2 for the next, etc.
+    handle = _target_handle(args.target)
+    if sources:
+        order = sorted(range(len(sources)),
+                       key=lambda i: -float(sources[i].get("peak_Jybeam", 0.0)))
+        for rank_minus_one, idx in enumerate(order):
+            sources[idx]["handle"] = handle
+            sources[idx]["rank"] = rank_minus_one + 1
     pd.DataFrame(sources).to_csv(outroot / "continuum_sources.csv", index=False)
 
     plot_continuum_overview(cont_data, cont_hdr, cont_sigma, sources, outroot / "overview_continuum.png")

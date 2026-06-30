@@ -56,8 +56,14 @@ def main():
         rest = float(r["rest_GHz"])
         vlsr = vlsr_for(target)
         if vlsr is None:
-            print(f"  SKIP {target}: no vLSR")
-            continue
+            # Fall back to the guide line's measured peak velocity
+            try:
+                vlsr = float(r["peak_v"])
+                print(f"  {target}: no lit vLSR, using line peak_v="
+                      f"{vlsr:+.1f} km/s")
+            except (KeyError, TypeError, ValueError):
+                print(f"  SKIP {target}: no vLSR")
+                continue
         cmd = [sys.executable, "build_kinematic_stack.py",
                "--target", target, "--proposal", prop,
                "--guide-line", guide, "--guide-rest-GHz", f"{rest:.6f}",

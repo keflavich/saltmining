@@ -24,7 +24,7 @@ UVDIR = Path("/orange/adamginsburg/salt/survey_2026/uvdata")
 PROPS = ["2017.1.00237.S", "2016.1.01137.S"]
 DEST_NAME = "IRAS17233-3606"
 NAMES = ["IRAS17233-3606", "IRAS_17233-3606", "IRAS_17233_3606",
-         "I17233", "IRAS17233", "G351.7745-00.5377"]
+         "I17233", "IRAS17233", "G351.7745-00.5377", "G351.77-0.54"]
 
 SCI = re.compile(r"_sci\..*\.(cube|mfs|cont)(\.[a-z]+)?\.I\.pbcor\.fits$",
                   re.IGNORECASE)

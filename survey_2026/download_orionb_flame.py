@@ -54,9 +54,13 @@ def main():
         print(f"  giving up after 5 attempts", flush=True)
         return
     print(f"  {len(urls)} files to fetch", flush=True)
+    # Print a sample of URLs so we know what's there
+    for u in list(urls["access_url"])[:5]:
+        print(f"    sample: {u}", flush=True)
+    # Filter: keep any URL referencing pbcor or _sci science data
     keep_urls = [u for u in urls["access_url"]
-                 if (".pbcor.fits" in u and ("cube" in u or "cont" in u))]
-    print(f"  filtered: {len(keep_urls)} pbcor fits files", flush=True)
+                 if "pbcor" in u or ("_sci" in u and ".fits" in u)]
+    print(f"  filtered: {len(keep_urls)} pbcor/sci-fits files", flush=True)
     Alma.cache_location = str(OUTDIR)
     if keep_urls:
         files = Alma.download_files(keep_urls, savedir=str(OUTDIR),

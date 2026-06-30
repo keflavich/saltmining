@@ -222,16 +222,45 @@ def main():
     s3 = pd.DataFrame(s3_rows)
     print(f"3 kpc sample combined: {len(s3)}")
 
-    rows = [summarize(s2, "$d \\leq 2$\\,kpc", lit),
-            summarize(s3, "$d \\leq 3$\\,kpc", lit)]
+    # Classify each row by source type.
+    # HII   = optically detected / known un-embedded HII region
+    #         (raw type in {"HII", "HII region"}, also "HII/YSO" since the
+    #         HII component is detected at optical/cm).
+    # MYSO  = embedded massive YSO / not yet HII at optical
+    #         (raw type in {"YSO", "MYSO"} plus the "Young/old star" and
+    #          "Fevol=2" residuals which we treat as embedded by default).
+    def is_hii(t):
+        s = str(t or "").strip().lower()
+        return s in {"hii", "hii region", "hii/yso"}
+
+    def is_myso(t):
+        s = str(t or "").strip().lower()
+        return s in {"yso", "myso", "young/old star", "fevol=2"}
+
+    def split_sample(df, label_prefix):
+        hii  = df[df["type"].apply(is_hii)] if "type" in df.columns else df.iloc[0:0]
+        myso = df[df["type"].apply(is_myso)] if "type" in df.columns else df.iloc[0:0]
+        return [
+            summarize(df,   rf"{label_prefix}, all",  lit),
+            summarize(hii,  rf"{label_prefix}, HII",  lit),
+            summarize(myso, rf"{label_prefix}, MYSO", lit),
+        ]
+
+    rows = split_sample(s2, r"$d \leq 2$\,kpc") + \
+           split_sample(s3, r"$d \leq 3$\,kpc")
     for r in rows:
-        print(r)
+        print(r["label"], r["n"], r["n_alma"], r["analyzed"])
 
     out = []
     out.append(r"\begin{deluxetable}{lccccccccc}")
     out.append(r"\tabletypesize{\footnotesize}")
     out.append(r"\tablecaption{Demographic summary of the L$_\mathrm{bol} \geq 10^4\,L_\odot$ "
                r"HMYSO sample within $d \leq 2$\,kpc and $d \leq 3$\,kpc. "
+               r"Each distance cut is split into three rows: `all', `HII' "
+               r"(optically/cm-detected HII regions, source type "
+               r"HII / HII region / HII/YSO in the input catalog), and "
+               r"`MYSO' (embedded massive YSOs, source type YSO / MYSO). "
+               r"Targets with no type assignment are counted only in `all'. "
                r"`Analyzed' counts targets with a completed "
                r"\texttt{line\_pipeline} run or a literature-confirmed "
                r"detection. Per-species cells give "

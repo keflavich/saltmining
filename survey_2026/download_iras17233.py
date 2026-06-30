@@ -63,10 +63,19 @@ def main():
         dest.mkdir(parents=True, exist_ok=True)
         for i, mous in enumerate(mous_list, 1):
             print(f"\n  [{i}/{len(mous_list)}] {mous}", flush=True)
-            try:
-                info = Alma.get_data_info(mous, expand_tarfiles=True)
-            except (OSError, ValueError) as e:
-                print(f"    ! get_data_info fail: {e}")
+            from pyvo.dal.exceptions import DALServiceError
+            import time
+            info = None
+            for attempt in range(5):
+                try:
+                    info = Alma.get_data_info(mous, expand_tarfiles=True)
+                    break
+                except (OSError, ValueError, DALServiceError) as e:
+                    print(f"    ! get_data_info attempt {attempt+1}/5 fail: "
+                          f"{type(e).__name__}: {str(e)[:80]}")
+                    time.sleep(30 * (attempt + 1))
+            if info is None:
+                print(f"    ! giving up on {mous}")
                 continue
             if info is None or len(info) == 0:
                 continue

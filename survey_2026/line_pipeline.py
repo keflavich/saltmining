@@ -114,21 +114,25 @@ def build_line_list(fmin=80.0, fmax=500.0):
 
 
 # ----- Cube utilities -----
-def _fits_getheader_retry(path, attempts=4, delay=2.0):
-    """fits.getheader with retry on transient Lustre/FUSE BrokenPipeError."""
+def _fits_getheader_retry(path, attempts=6, delay=5.0):
+    """fits.getheader with retry on transient Lustre/FUSE I/O errors."""
     import time
     last_err = None
     for i in range(attempts):
         try:
             return fits.getheader(path)
-        except BrokenPipeError as e:
+        except (BrokenPipeError, OSError) as e:
             last_err = e
             time.sleep(delay * (i + 1))
     raise last_err
 
 
 def cube_freq_range(path):
-    h = _fits_getheader_retry(path)
+    try:
+        h = _fits_getheader_retry(path)
+    except (BrokenPipeError, OSError) as e:
+        print(f"  ! cube_freq_range({Path(path).name}): {type(e).__name__}; skipping", flush=True)
+        return None, None
     crv = h.get("CRVAL3", 0); cd = h.get("CDELT3", 0); n = h.get("NAXIS3", 0); crp = h.get("CRPIX3", 1)
     if n == 0 or cd == 0: return None, None
     fmin = (crv + (1-crp)*cd)*1e-9

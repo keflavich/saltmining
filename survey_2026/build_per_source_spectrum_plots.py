@@ -396,9 +396,11 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
             fontsize=18)
         fig.tight_layout(rect=[0, 0, 1, 0.97])
         out_png = target_dir / f"spectrum_panels_src{src_id:02d}{suffix}.png"
-        fig.savefig(out_png, dpi=180)
+        out_pdf = out_png.with_suffix(".pdf")
+        fig.savefig(out_png, dpi=300, bbox_inches="tight")
+        fig.savefig(out_pdf, bbox_inches="tight")
         plt.close(fig)
-        print(f"  wrote {out_png} ({n} panels)")
+        print(f"  wrote {out_png} + .pdf ({n} panels)")
 
 
 def main():

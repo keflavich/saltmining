@@ -150,7 +150,7 @@ def build_figure(display, target):
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     safe = target.replace("/", "_").replace(" ", "_")
     outp = OUT_FIG / f"newdet_{safe}_mom0.png"
-    fig.savefig(outp, dpi=120)
+    fig.savefig(outp, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {outp.name}  ({n} panels)")
     return outp

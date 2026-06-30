@@ -29,10 +29,11 @@ OUT_FIG.mkdir(parents=True, exist_ok=True)
 
 # Map display label (Table-4 row) -> directory name on disk.
 NEW_DETECTION_TARGETS = [
-    ("IRAS 15412-5359",  "G326.6618+00.5207"),
-    ("IRAS 18174-1612",  "G015.0357-00.6795"),
-    ("I17016-4124",      "G345.5043+00.3480"),
-    ("IRAS 17233-3606",  "IRAS17233-3606"),
+    # IRAS 18174-1612 demoted: vet_new_detections shows H2O+KCl NON-DETECTION
+    # and NaCl single-v2-line SUSPECT only (no v=0 corroboration).
+    ("IRAS 15412-5359",  "G326.6618+00.5207"),  # H2O REAL; NaCl SUSPECT
+    ("I17016-4124",      "G345.5043+00.3480"),  # H2O REAL; NaCl SUSPECT
+    ("IRAS 17233-3606",  "IRAS17233-3606"),     # NaCl REAL (v=0 + v=1 J18-17)
 ]
 
 # Per source, choose up to 4 mom0 maps to render. Priority order.
@@ -47,6 +48,26 @@ LINE_PRIORITIES = [
 
 
 import pandas as pd  # noqa: E402
+
+
+_VET_DF = None
+
+
+def _vetted_lines(target):
+    """Return set of line names that PASS the strict-vet
+    (data/new_detection_vet.csv) for this target. Empty set if no vet
+    csv exists (caller falls back to permissive snr>=5 cell flag)."""
+    global _VET_DF
+    if _VET_DF is None:
+        path = Path("/orange/adamginsburg/salt/survey_2026/data/new_detection_vet.csv")
+        if path.exists():
+            _VET_DF = pd.read_csv(path)
+        else:
+            _VET_DF = pd.DataFrame()
+    if _VET_DF.empty:
+        return None  # no filter
+    sub = _VET_DF[(_VET_DF["target"] == target) & (_VET_DF["passes_strict"])]
+    return set(sub["line"])
 
 _TARGET_COORDS = None
 
@@ -131,19 +152,33 @@ def brightest_source(prop_dir):
     return info[0] if info else None
 
 
-def find_mom0(prop_dir, src_id, line_label, pattern):
-    """Return the highest-priority mom0 fits matching pattern at src_id."""
+def find_mom0(prop_dir, src_id, line_label, pattern, vetted=None):
+    """Return the highest-priority mom0 fits matching pattern at src_id.
+    When `vetted` is a non-empty set, only consider files whose line
+    name (the substring between `source_NN_` and `_mom0.fits`) appears
+    in that set — used to drop suspicious lines from the paper figure.
+    """
     import re
     src_dir = prop_dir / f"source_{src_id:02d}"
     if not src_dir.is_dir():
         return None
     rx = re.compile(pattern, re.IGNORECASE)
     candidates = [p for p in src_dir.glob("*_mom0.fits") if rx.search(p.name)]
-    # Sort: prefer v=0 (ground state, less risk of confusion) for NaCl/KCl,
-    # else first.
+    if vetted:
+        def linename(p):
+            n = p.stem  # e.g. source_05_NaCl_v0_J18-17_mom0
+            # Strip trailing "_mom0" and leading "source_NN_" if present.
+            n = n[:-5] if n.endswith("_mom0") else n
+            for prefix in (f"source_{src_id:02d}_",):
+                if n.startswith(prefix):
+                    n = n[len(prefix):]
+            return n
+        candidates = [p for p in candidates if linename(p) in vetted]
+    # Sort: prefer v=0 (ground state, less risk of confusion); for H2O
+    # prefer the 5_15-4_22 ground-vibrational line over v2_* maser.
     def key(p):
         n = p.name
-        v0 = 0 if "_v0_" in n else 1
+        v0 = 0 if ("_v0_" in n or (n.startswith("source_") and "H2O_" in n and "_v" not in n.split("H2O_", 1)[1].split("_")[0])) else 1
         return (v0, n)
     candidates.sort(key=key)
     return candidates[0] if candidates else None
@@ -208,9 +243,10 @@ def build_figure(display, target):
     if bid is None:
         print(f"  no brightest source in {pd_}")
         return None
+    vetted = _vetted_lines(target)
     panels = []
     for label, pat in LINE_PRIORITIES:
-        m = find_mom0(pd_, bid, label, pat)
+        m = find_mom0(pd_, bid, label, pat, vetted=vetted)
         if m is not None:
             panels.append((label, m))
         if len(panels) == 4:

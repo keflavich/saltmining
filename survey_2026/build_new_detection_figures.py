@@ -149,7 +149,12 @@ def find_mom0(prop_dir, src_id, line_label, pattern):
     return candidates[0] if candidates else None
 
 
-def render_panel(ax, fits_path, title):
+def render_panel(ax, fits_path, title, cmap="inferno", mask_fits=None,
+                  mask_nsigma=3.0):
+    """Render a single mom0/mom1 panel. When mask_fits is given (path to a
+    mom0 file), pixels where the mom0 is below mask_nsigma * mad_std are
+    masked off — used for mom1 panels so velocity is only shown where line
+    emission is actually detected."""
     with fits.open(fits_path) as hdul:
         data = hdul[0].data
         hdr = hdul[0].header
@@ -159,11 +164,29 @@ def render_panel(ax, fits_path, title):
         return
     while data.ndim > 2:
         data = data[0]
-    wcs = WCS(hdr).celestial
-    norm = ImageNormalize(data, interval=AsymmetricPercentileInterval(2, 99.5))
-    im = ax.imshow(data, origin="lower", cmap="inferno", norm=norm)
+    if mask_fits is not None and Path(mask_fits).exists():
+        from astropy.stats import mad_std
+        with fits.open(mask_fits) as h2:
+            mdata = h2[0].data
+        while mdata.ndim > 2:
+            mdata = mdata[0]
+        if mdata.shape == data.shape:
+            sig = mad_std(mdata, ignore_nan=True)
+            data = np.where(mdata > mask_nsigma * sig, data, np.nan)
+    if cmap == "RdBu_r":
+        # Symmetric velocity colour scaling around the median.
+        finite = data[np.isfinite(data)]
+        if finite.size:
+            med = float(np.nanmedian(finite))
+            span = float(np.nanpercentile(np.abs(finite - med), 95))
+            vmin, vmax = med - span, med + span
+        else:
+            vmin, vmax = -10.0, 10.0
+        im = ax.imshow(data, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+    else:
+        norm = ImageNormalize(data, interval=AsymmetricPercentileInterval(2, 99.5))
+        im = ax.imshow(data, origin="lower", cmap=cmap, norm=norm)
     ax.set_title(title, fontsize=10)
-    # Strip ticks for compactness
     ax.tick_params(axis="both", which="both", labelsize=7)
 
 
@@ -196,16 +219,27 @@ def build_figure(display, target):
         print(f"  no mom0 maps for {target} src_{bid:02d}")
         return None
     n = len(panels)
-    fig, axes = plt.subplots(1, n, figsize=(4 * n, 4), squeeze=False)
-    for ax, (label, fp) in zip(axes[0], panels):
-        render_panel(ax, fp, f"{label}: {fp.stem.replace('source_'+f'{bid:02d}_','')}")
+    fig, axes = plt.subplots(2, n, figsize=(4 * n, 8), squeeze=False)
+    for col, (label, fp) in enumerate(panels):
+        # Top row: mom0
+        title_stem = fp.stem.replace("source_" + f"{bid:02d}_", "")
+        render_panel(axes[0, col], fp, f"{label} (mom0): {title_stem}",
+                      cmap="inferno")
+        # Bottom row: mom1, masked by the corresponding mom0
+        mom1 = Path(str(fp).replace("_mom0.fits", "_mom1.fits"))
+        if mom1.exists():
+            render_panel(axes[1, col], mom1, f"{label} (mom1, $\\geq3\\sigma$)",
+                          cmap="RdBu_r", mask_fits=fp, mask_nsigma=3.0)
+        else:
+            axes[1, col].set_axis_off()
+            axes[1, col].set_title(f"{label} (no mom1)")
     fig.suptitle(f"{display} (src_{bid:02d}, {pd_.name})", fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     safe = target.replace("/", "_").replace(" ", "_")
     outp = OUT_FIG / f"newdet_{safe}_mom0.png"
     fig.savefig(outp, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"  wrote {outp.name}  ({n} panels)")
+    print(f"  wrote {outp.name}  ({n} mom0 + {n} mom1 panels)")
     return outp
 
 

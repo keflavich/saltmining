@@ -291,10 +291,43 @@ def vwidth_for(proposal_dir: Path, bid: int):
     return float(np.mean(spans)) if spans else None
 
 
-def detections_at_brightest(proposal_dir: Path, bid: int):
-    """Return dict with rrl, nacl, kcl, h2o, com booleans evaluated AT the
-    brightest mm continuum source (snr >= 5 at source==bid). Returns None if
-    measurements are missing.
+_VET_DF_CACHE = None
+
+
+def _strict_vet_pass(target, proposal, bid, species):
+    """Return REAL/SUSPECT/None per data/all_detection_vet.csv for this
+    (target, proposal, bid, species). REAL means v0 ground state passes
+    OR >=2 transitions pass."""
+    global _VET_DF_CACHE
+    if _VET_DF_CACHE is None:
+        vp = ROOT / "data/all_detection_vet.csv"
+        _VET_DF_CACHE = pd.read_csv(vp) if vp.exists() else pd.DataFrame()
+    if _VET_DF_CACHE.empty:
+        return None
+    g = _VET_DF_CACHE[(_VET_DF_CACHE["target"] == target)
+                       & (_VET_DF_CACHE["proposal"] == proposal)
+                       & (_VET_DF_CACHE["src_id"] == bid)
+                       & (_VET_DF_CACHE["species"] == species)]
+    if g.empty:
+        return None  # no vet info -> caller trusts raw pipeline hit
+    np_pass = int(g["passes_strict"].sum())
+    v0_det = bool(((g["is_v0"]) & (g["passes_strict"])).any())
+    if v0_det or np_pass >= 2:
+        return "REAL"
+    if np_pass >= 1:
+        return "SUSPECT"
+    # Vet rows exist but ZERO pass -> the line(s) are below threshold or
+    # contaminated (e.g. dominant absorption trough). Demote.
+    return "REJECT"
+
+
+def detections_at_brightest(proposal_dir: Path, bid: int, target=None):
+    """Return dict with rrl, nacl, kcl, h2o, com state for the brightest mm
+    continuum source. Salt-class species (NaCl, KCl, H2O) are gated by the
+    strict-vet criteria (data/all_detection_vet.csv) when available; the
+    naive snr>=5 detection is demoted to "suspect" or "no" when strict-vet
+    flags it as SUSPECT or NON-DETECTION. RRL + COM keep the original
+    snr>=5 logic.
     """
     csv = proposal_dir / "line_measurements.csv"
     if not csv.exists():
@@ -309,13 +342,31 @@ def detections_at_brightest(proposal_dir: Path, bid: int):
     rrl = bool(sub[(sub["group"] == "RRL")
                    | sub["line"].astype(str).str.match(r"^H\d+(alpha|beta|gamma|delta)$")
                    ].shape[0])
-    nacl = bool(sub[sub["group"] == "NaCl"].shape[0])
-    kcl = bool(sub[sub["group"] == "KCl"].shape[0])
-    h2o = bool(sub[sub["group"] == "H2O"].shape[0])
     com_pat = re.compile(r"^(CH3OH|CH3CN|HC3N|CH3OCHO|C2H5CN|CH3OCH3|NH2CHO|HCOOH|HNCO)",
                          re.IGNORECASE)
     com = bool(sub[sub["line"].astype(str).apply(lambda L: bool(com_pat.match(L)))].shape[0])
-    return dict(rrl=rrl, nacl=nacl, kcl=kcl, h2o=h2o, com=com)
+
+    if target is None:
+        target = proposal_dir.parent.name
+    proposal = proposal_dir.name
+
+    def _gated(species, raw_hit):
+        verdict = _strict_vet_pass(target, proposal, int(bid), species)
+        if verdict is None:
+            return raw_hit  # no vet info -> trust raw
+        if verdict == "REAL":
+            return True
+        # SUSPECT or REJECT -> demote to non-detection in T4.
+        return False
+
+    nacl_raw = bool(sub[sub["group"] == "NaCl"].shape[0])
+    kcl_raw = bool(sub[sub["group"] == "KCl"].shape[0])
+    h2o_raw = bool(sub[sub["group"] == "H2O"].shape[0])
+    return dict(rrl=rrl,
+                nacl=_gated("NaCl", nacl_raw),
+                kcl=_gated("KCl", kcl_raw),
+                h2o=_gated("H2O", h2o_raw),
+                com=com)
 
 
 SPECIES_LIT = ["NaCl", "KCl", "H2O", "SiO", "SiS", "SO", "COM", "RRL"]

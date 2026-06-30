@@ -37,6 +37,69 @@ ANALYSIS = ROOT / "analysis_products"
 DISK_LINES = {**_lines.disk_lines, **_lines.absorbers}
 LINE_REST_GHZ = {n: float(u.Quantity(f).to(u.GHz).value) for n, f in DISK_LINES.items()}
 
+# Major ISM tracers missing from the disk_lines catalog. Frequencies in GHz.
+_ISM_EXTRA = {
+    "13CO_2-1":       220.39868,
+    "OCS_18-17":      218.90336,
+    "OCS_19-18":      231.06099,
+    "OCS_20-19":      243.21804,
+    "OCS_21-20":      255.37418,
+    "H2CO_322-221":   218.47563,
+    "H2CO_321-220":   218.76007,
+    "C18O_3-2":       329.33055,
+    "13CO_3-2":       330.58797,
+    "CS_5-4":         244.93556,
+    "13CS_5-4":       231.22069,
+    "13CN_2-1":       217.46715,
+    "CH3OH_5-4":      241.79143,
+    "CH3CN_12-11":    220.74726,
+    "CH3OH_4_0-3_-1": 218.44006,
+    "HC3N_24-23":     218.32479,
+    "HNCO_10_0-9_0":  219.79827,
+    "SiO_4-3":        173.68831,
+    "SO2_220-211":    216.64330,
+    "SO2_111-100":    221.96522,
+}
+LINE_REST_GHZ.update(_ISM_EXTRA)
+
+
+C_KMS = 299792.458
+
+
+def vlsr_for_target(target):
+    """Pull v_LSR (km/s) for the target from vlsr_from_data.json /
+    vlsr_from_literature.json. Returns None if unknown — caller should
+    fall back to peak_v of the brightest line."""
+    import json
+    for p in (ROOT / "data/vlsr_from_data.json",
+              ROOT / "data/vlsr_from_literature.json"):
+        if not p.exists():
+            continue
+        try:
+            d = json.loads(p.read_text())
+            v = d.get(target, {}).get("v_LSR_kms")
+            if v is not None:
+                return float(v)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    return None
+
+
+def vlsr_from_detected(target, proposal, src_id):
+    """Median peak_v across detected lines at this source (km/s)."""
+    meas = ANALYSIS / target / proposal / "line_measurements.csv"
+    if not meas.exists():
+        return None
+    try:
+        df = pd.read_csv(meas)
+    except pd.errors.EmptyDataError:
+        return None
+    sub = df[(df["source"] == src_id) & (df["snr"] >= 5.0)]
+    if sub.empty or "peak_v" not in sub.columns:
+        return None
+    v = float(np.nanmedian(sub["peak_v"]))
+    return v if np.isfinite(v) else None
+
 
 def _load_com_freqs(species):
     """Return [(rest_GHz, T_K), ...] for a COM rest-freq catalog at
@@ -134,19 +197,24 @@ def avg_spectrum_over_beam(cube_path, coord, n_half_pixels=2):
     return freq_Hz / 1e9, spec_jybeam * K
 
 
-def overlay_lineids_panel(ax, fmin, fmax, ymax, det_lines=None):
+def overlay_lineids_panel(ax, fmin, fmax, ymax, det_lines=None, vsys=0.0):
     """Vertical-line + small rotated text overlay for line identifications.
 
-    Two layers:
+    Catalog rest frequencies are Doppler-shifted by vsys (km/s) before
+    overlay so the marks line up with observed peaks.
+
+    Layers:
       - orange (C1): catalog lines from _KEEP_PATTERNS (search-list species)
       - black:       additional lines detected at >=5 sigma at this source
-                     that are NOT already in the search list (likely
-                     contaminants / strong COMs / shock tracers in band).
+      - red arrow:   CH3OCHO XCLASS transitions, Doppler-shifted by vsys
+      - blue arrow:  CH3OH XCLASS transitions, Doppler-shifted by vsys
 
-    det_lines: list of (name, obs_GHz) for detected lines at this src/proposal.
+    det_lines: list of (name, obs_GHz) for detected lines at this src/proposal
+               (already at observed freq, no extra shift applied).
     """
-    keep = [(n, f) for n, f in LINE_REST_GHZ.items()
-            if fmin <= f <= fmax and _line_is_important(n)]
+    shift = 1.0 - vsys / C_KMS  # rest * shift = observed
+    keep = [(n, f * shift) for n, f in LINE_REST_GHZ.items()
+            if fmin <= f * shift <= fmax and _line_is_important(n)]
     keep.sort(key=lambda kv: kv[1])
     for n, f in keep:
         ax.axvline(f, color="C1", lw=0.5, alpha=0.6)
@@ -165,15 +233,17 @@ def overlay_lineids_panel(ax, fmin, fmax, ymax, det_lines=None):
             ax.text(f, ymax * 0.55, n, rotation=90, ha="center", va="top",
                      fontsize=8, color="black", alpha=0.9, clip_on=True)
     # COM-blender markers: red downward arrows for CH3OCHO, blue for CH3OH.
-    # Drawn at the top of the panel so they don't obscure the spectrum.
+    # Catalog freqs are REST; shift to observed by vsys.
     for fr, T_K in CH3OCHO_FREQS:
-        if fmin <= fr <= fmax:
-            ax.annotate("", xy=(fr, ymax * 0.93), xytext=(fr, ymax * 1.02),
+        fo = fr * shift
+        if fmin <= fo <= fmax:
+            ax.annotate("", xy=(fo, ymax * 0.93), xytext=(fo, ymax * 1.02),
                          arrowprops=dict(arrowstyle="-|>", color="red",
                                          lw=0.7, mutation_scale=8))
     for fr, T_K in CH3OH_FREQS:
-        if fmin <= fr <= fmax:
-            ax.annotate("", xy=(fr, ymax * 0.88), xytext=(fr, ymax * 0.97),
+        fo = fr * shift
+        if fmin <= fo <= fmax:
+            ax.annotate("", xy=(fo, ymax * 0.88), xytext=(fo, ymax * 0.97),
                          arrowprops=dict(arrowstyle="-|>", color="blue",
                                          lw=0.7, mutation_scale=8))
 
@@ -253,6 +323,13 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
     panels.sort(key=lambda p: (p[0], p[2]))
 
     det_lines = load_detected_lines(target, proposal, src_id)
+    # Per-source systemic v_LSR for catalog overlay shift.
+    vsys = vlsr_from_detected(target, proposal, src_id)
+    if vsys is None:
+        vsys = vlsr_for_target(target)
+    if vsys is None:
+        vsys = 0.0
+    print(f"  using vsys={vsys:+.1f} km/s for overlay shift")
 
     # Paginate
     n_pages = (len(panels) + rows_per_page - 1) // rows_per_page
@@ -290,7 +367,7 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
                 continue
             ax.set_ylim(ymin, ymax)
             overlay_lineids_panel(ax, float(freq.min()), float(freq.max()),
-                                    ymax, det_lines=det_lines)
+                                    ymax, det_lines=det_lines, vsys=vsys)
         axes[-1].set_xlabel("observed frequency (GHz)", fontsize=12)
         # COM blender legend on top panel
         try:

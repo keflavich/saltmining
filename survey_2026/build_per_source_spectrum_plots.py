@@ -198,17 +198,32 @@ def avg_spectrum_over_beam(cube_path, coord, n_half_pixels=2):
     return freq_Hz / 1e9, spec_jybeam * K
 
 
+def _species_color(name: str) -> str:
+    """Color-coding per species class (matches analysis/lineid_style.py)."""
+    lo = name.lower()
+    if "nacl" in lo or "kcl" in lo:
+        return "red"
+    if lo.startswith("h2o"):
+        return "cyan"
+    if lo.startswith("h") and ("alpha" in lo or "beta" in lo or "gamma" in lo
+                                or "delta" in lo):
+        return "magenta"
+    return "black"
+
+
 def overlay_lineids_panel(ax, fmin, fmax, ymax, det_lines=None, vsys=0.0):
     """Vertical-line + small rotated text overlay for line identifications.
 
     Catalog rest frequencies are Doppler-shifted by vsys (km/s) before
     overlay so the marks line up with observed peaks.
 
-    Layers:
-      - orange (C1): catalog lines from _KEEP_PATTERNS (search-list species)
-      - black:       additional lines detected at >=5 sigma at this source
-      - red arrow:   CH3OCHO XCLASS transitions, Doppler-shifted by vsys
-      - blue arrow:  CH3OH XCLASS transitions, Doppler-shifted by vsys
+    Color scheme (matches analysis/lineid_style.py for cross-plot consistency):
+      - red    : NaCl/KCl (salt)
+      - cyan   : H2O
+      - magenta: RRL (Hn alpha/beta/gamma/delta)
+      - black  : other ISM (CO, 13CO, OCS, CH3OH, ...) + extras detected here
+      - red arrow:  CH3OCHO XCLASS transitions
+      - blue arrow: CH3OH XCLASS transitions
 
     det_lines: list of (name, obs_GHz) for detected lines at this src/proposal
                (already at observed freq, no extra shift applied).
@@ -218,9 +233,10 @@ def overlay_lineids_panel(ax, fmin, fmax, ymax, det_lines=None, vsys=0.0):
             if fmin <= f * shift <= fmax and _line_is_important(n)]
     keep.sort(key=lambda kv: kv[1])
     for n, f in keep:
-        ax.axvline(f, color="C1", lw=0.5, alpha=0.6)
+        col = _species_color(n)
+        ax.axvline(f, color=col, lw=0.5, alpha=0.6)
         ax.text(f, ymax * 0.97, n, rotation=90, ha="center", va="top",
-                 fontsize=8, color="C1", alpha=0.95, clip_on=True)
+                 fontsize=9, color=col, alpha=0.95, clip_on=True)
     if det_lines:
         # Dedup: drop entries already represented in the orange layer
         salt_freqs = set(round(f, 4) for _, f in keep)
@@ -374,8 +390,14 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
         try:
             from matplotlib.lines import Line2D
             legend_handles = [
-                Line2D([0], [0], color="C1", lw=1,
-                        label="non-salt lines (catalog)"),
+                Line2D([0], [0], color="red", lw=1,
+                        label="NaCl / KCl (salt)"),
+                Line2D([0], [0], color="cyan", lw=1,
+                        label=r"H$_2$O 232"),
+                Line2D([0], [0], color="magenta", lw=1,
+                        label=r"RRL (Hn$\alpha\beta\gamma$)"),
+                Line2D([0], [0], color="black", lw=1,
+                        label="other ISM lines"),
                 Line2D([0], [0], color="black", lw=1, linestyle="--",
                         label=r"other $\geq 5\sigma$ detected"),
                 Line2D([0], [0], marker=r"$\downarrow$", color="red",

@@ -37,6 +37,29 @@ ANALYSIS = ROOT / "analysis_products"
 DISK_LINES = {**_lines.disk_lines, **_lines.absorbers}
 LINE_REST_GHZ = {n: float(u.Quantity(f).to(u.GHz).value) for n, f in DISK_LINES.items()}
 
+
+def _load_com_freqs(species):
+    """Return [(rest_GHz, T_K), ...] for a COM rest-freq catalog at
+    data/<species>_transitions.csv (produced from the XCLASS comprehensive
+    band-6 run)."""
+    p = ROOT / f"data/{species}_transitions.csv"
+    if not p.exists():
+        return []
+    out = []
+    with p.open() as f:
+        next(f, None)  # skip header
+        for line in f:
+            try:
+                fr_MHz, T_K = line.strip().split(",")
+                out.append((float(fr_MHz) / 1000.0, float(T_K)))
+            except (ValueError, IndexError):
+                continue
+    return sorted(out)
+
+
+CH3OCHO_FREQS = _load_com_freqs("CH3OCHO")
+CH3OH_FREQS = _load_com_freqs("CH3OH")
+
 # Restricted subset used for the per-panel overlay: salts + the strongest
 # COMs + common shock/HII tracers in the band. Keeps the panels readable
 # (lineid_plot fails to lay out 60+ labels in a 12" panel).
@@ -141,6 +164,18 @@ def overlay_lineids_panel(ax, fmin, fmax, ymax, det_lines=None):
             ax.axvline(f, color="black", lw=0.5, alpha=0.6, linestyle="--")
             ax.text(f, ymax * 0.55, n, rotation=90, ha="center", va="top",
                      fontsize=8, color="black", alpha=0.9, clip_on=True)
+    # COM-blender markers: red downward arrows for CH3OCHO, blue for CH3OH.
+    # Drawn at the top of the panel so they don't obscure the spectrum.
+    for fr, T_K in CH3OCHO_FREQS:
+        if fmin <= fr <= fmax:
+            ax.annotate("", xy=(fr, ymax * 0.93), xytext=(fr, ymax * 1.02),
+                         arrowprops=dict(arrowstyle="-|>", color="red",
+                                         lw=0.7, mutation_scale=8))
+    for fr, T_K in CH3OH_FREQS:
+        if fmin <= fr <= fmax:
+            ax.annotate("", xy=(fr, ymax * 0.88), xytext=(fr, ymax * 0.97),
+                         arrowprops=dict(arrowstyle="-|>", color="blue",
+                                         lw=0.7, mutation_scale=8))
 
 
 def load_detected_lines(target, proposal, src_id):
@@ -244,6 +279,25 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
             overlay_lineids_panel(ax, float(freq.min()), float(freq.max()),
                                     ymax, det_lines=det_lines)
         axes[-1].set_xlabel("observed frequency (GHz)", fontsize=12)
+        # COM blender legend on top panel
+        try:
+            from matplotlib.lines import Line2D
+            legend_handles = [
+                Line2D([0], [0], color="C1", lw=1,
+                        label="salt search list"),
+                Line2D([0], [0], color="black", lw=1, linestyle="--",
+                        label=r"other $\geq 5\sigma$ detected"),
+                Line2D([0], [0], marker=r"$\downarrow$", color="red",
+                        markersize=10, lw=0,
+                        label=r"CH$_3$OCHO transition (XCLASS)"),
+                Line2D([0], [0], marker=r"$\downarrow$", color="blue",
+                        markersize=10, lw=0,
+                        label=r"CH$_3$OH transition (XCLASS)"),
+            ]
+            axes[0].legend(handles=legend_handles, loc="upper right",
+                            fontsize=9, ncol=2, framealpha=0.85)
+        except (ImportError, ValueError):
+            pass
         suffix = "" if n_pages == 1 else f"_p{pi+1}"
         fig.suptitle(
             f"{target} src{src_id:02d}  (proposal {proposal}"

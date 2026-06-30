@@ -271,8 +271,21 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
             finite = T[np.isfinite(T)]
             if finite.size < 5:
                 continue
-            ymin = float(np.nanpercentile(finite, 1))
-            ymax = float(np.nanpercentile(finite, 99)) * 1.15 + 1
+            # Robust noise + median; window the y-axis to ~20 sigma total
+            # so noise-dominated panels are not stretched by a few outliers.
+            from astropy.stats import mad_std
+            med = float(np.nanmedian(finite))
+            sigma = float(mad_std(finite, ignore_nan=True))
+            if not np.isfinite(sigma) or sigma <= 0:
+                sigma = float(np.nanpercentile(finite, 84)
+                              - np.nanpercentile(finite, 50)) or 1.0
+            ymin_noise = med - 5.0 * sigma
+            ymax_noise = med + 15.0 * sigma
+            # Don't clip strong lines: if the 99th percentile is above the
+            # noise-based ymax, extend up to it.
+            p99 = float(np.nanpercentile(finite, 99))
+            ymax = max(ymax_noise, p99 * 1.10)
+            ymin = ymin_noise
             if not (np.isfinite(ymin) and np.isfinite(ymax)) or ymax <= ymin:
                 continue
             ax.set_ylim(ymin, ymax)

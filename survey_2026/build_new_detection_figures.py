@@ -29,11 +29,11 @@ OUT_FIG.mkdir(parents=True, exist_ok=True)
 
 # Map display label (Table-4 row) -> directory name on disk.
 NEW_DETECTION_TARGETS = [
-    # IRAS 18174-1612 demoted: vet_new_detections shows H2O+KCl NON-DETECTION
-    # and NaCl single-v2-line SUSPECT only (no v=0 corroboration).
-    ("IRAS 15412-5359",  "G326.6618+00.5207"),  # H2O REAL; NaCl SUSPECT
-    ("I17016-4124",      "G345.5043+00.3480"),  # H2O REAL; NaCl SUSPECT
-    ("IRAS 17233-3606",  "IRAS17233-3606"),     # NaCl REAL (v=0 + v=1 J18-17)
+    # Trimmed list per user: only TWO sources have a *genuinely-new* salt-class
+    # detection. IRAS 18174-1612 demoted to non-detection by strict-vet.
+    # IRAS 17233-3606 NaCl + H2O are in Ginsburg+2023 (G351.77 mm1) - not new.
+    ("IRAS 15412-5359",  "G326.6618+00.5207"),  # H2O REAL; NaCl SUSPECT (demoted)
+    ("I17016-4124",      "G345.5043+00.3480"),  # H2O REAL; NaCl SUSPECT (demoted)
 ]
 
 # Per source, choose up to 4 mom0 maps to render. Priority order.

@@ -113,13 +113,22 @@ def short_handle(name: str, alt_names: str) -> str:
 def source_label(target: str, src_id: int, alt_names: str,
                   brightness_rank: int) -> str:
     """Merged Source identifier for the data-summary table.
-    Priority: literature mm name → IRASmm{rank} → targetmm{rank}.
-    Examples: NGC6334I src05 → NGC6334I-MM1B; G268.4222-00.8490 src01 →
-    I09002mm1; G011.3252-01.8040 src02 → I18142mm2.
+    Priority: literature mm name → common name + mm{rank} → IRASmm{rank}
+    → targetmm{rank}. Common names come from build_target_table.COMMON_NAME.
+    Examples: NGC6334I src05 → NGC6334I-MM1B; OrionB-Flame src01 →
+    NGC 2024 (Flame)mm1; G268.4222-00.8490 src01 → I09002mm1.
     """
     key = (target, int(src_id))
     if key in LIT_MM_NAME:
         return LIT_MM_NAME[key]
+    # Prefer common name if known
+    try:
+        from build_target_table import COMMON_NAME
+    except ImportError:
+        COMMON_NAME = {}
+    common = COMMON_NAME.get(target)
+    if common and common != target:
+        return f"{common}-mm{brightness_rank}"
     handle = short_handle(target, alt_names)
     return f"{handle}mm{brightness_rank}"
 
@@ -315,23 +324,37 @@ def collect():
                 best_key = (n_det, theta_au)
                 best = (ad, bid, beam_arcsec, theta_au)
         if best is None:
-            # No analysis_products: decide between
+            # No analysis_products in the expected location. Try alias
+            # lookup (Orion-SrcI ↔ Orion_SrcI etc.) before giving up.
+            for alias in (name.replace("-", "_"), name.replace("_", "-")):
+                if alias == name:
+                    continue
+                adirs = sorted((ANALYSIS / alias).glob("2*")) if (ANALYSIS / alias).is_dir() else []
+                if adirs:
+                    name = alias  # use alias going forward
+                    for ad in adirs:
+                        bid = brightest_source_id(ad / "continuum_sources.csv")
+                        if bid is None:
+                            continue
+                        beam_arcsec = beam_for_proposal(ad)
+                        theta_au = beam_arcsec * dist * 1000.0 if beam_arcsec else np.inf
+                        det = detections_at_brightest(ad, bid)
+                        n_det = sum(int(det[k]) for k in ("rrl","salt","com")) if det else 0
+                        if (n_det, -theta_au) > (best_key[0], -best_key[1]):
+                            best_key = (n_det, theta_au)
+                            best = (ad, bid, beam_arcsec, theta_au)
+                    break
+        if best is None:
+            # Still nothing: decide between
             #   (a) target listed in Table 3 (no ALMA <500 AU) → omit entirely
-            #   (b) target has literature detection → omit, table covered by
-            #       detections.tex / per_target_paper.tex
-            #   (c) data exist on disk but pipeline not yet run → emit TODO
+            #   (b) data exist on disk but pipeline not yet run → emit TODO
             n_proposals_500au = 0
             alma_props = str(r.get("alma_proposals", "") or "")
             if alma_props and alma_props != "nan":
-                # rough proxy for "we have <500AU data" — best_res_arcsec * dist
                 br = r.get("best_res_arcsec")
                 if pd.notna(br) and br * dist * 1000.0 < 500.0:
                     n_proposals_500au = 1
-            in_lit = name in lit_targets
-            if n_proposals_500au == 0 or in_lit:
-                # Skipping rather than emitting "(no data)". User: noalma table
-                # is the place to declare absence; lit-only sources go to
-                # detections.tex/per_target table.
+            if n_proposals_500au == 0:
                 continue
             rows.append(dict(
                 source=merged_src_pre,

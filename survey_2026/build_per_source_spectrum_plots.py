@@ -343,8 +343,8 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
             axes = [axes]
         for ax, (mous, spw, _, freq, T) in zip(axes, page):
             ax.plot(freq, T, "k-", lw=0.8)
-            ax.set_ylabel(f"{mous}\n{spw}\nT (K)", fontsize=11)
-            ax.tick_params(labelsize=11)
+            ax.set_ylabel(f"{mous}\n{spw}\nT (K)", fontsize=15)
+            ax.tick_params(labelsize=14)
             ax.set_xlim(float(freq.min()), float(freq.max()))
             finite = T[np.isfinite(T)]
             if finite.size < 5:
@@ -369,31 +369,31 @@ def plot_source(target, proposal, src_id, rows_per_page=8):
             ax.set_ylim(ymin, ymax)
             overlay_lineids_panel(ax, float(freq.min()), float(freq.max()),
                                     ymax, det_lines=det_lines, vsys=vsys)
-        axes[-1].set_xlabel("observed frequency (GHz)", fontsize=12)
-        # COM blender legend on top panel
+        axes[-1].set_xlabel("observed frequency (GHz)", fontsize=16)
+        # Legend on top panel
         try:
             from matplotlib.lines import Line2D
             legend_handles = [
                 Line2D([0], [0], color="C1", lw=1,
-                        label="salt search list"),
+                        label="non-salt lines (catalog)"),
                 Line2D([0], [0], color="black", lw=1, linestyle="--",
                         label=r"other $\geq 5\sigma$ detected"),
                 Line2D([0], [0], marker=r"$\downarrow$", color="red",
-                        markersize=10, lw=0,
+                        markersize=14, lw=0,
                         label=r"CH$_3$OCHO transition (XCLASS)"),
                 Line2D([0], [0], marker=r"$\downarrow$", color="blue",
-                        markersize=10, lw=0,
+                        markersize=14, lw=0,
                         label=r"CH$_3$OH transition (XCLASS)"),
             ]
             axes[0].legend(handles=legend_handles, loc="upper right",
-                            fontsize=9, ncol=2, framealpha=0.85)
+                            fontsize=12, ncol=2, framealpha=0.85)
         except (ImportError, ValueError):
             pass
         suffix = "" if n_pages == 1 else f"_p{pi+1}"
         fig.suptitle(
             f"{target} src{src_id:02d}  (proposal {proposal}"
             f"{f', page {pi+1}/{n_pages}' if n_pages > 1 else ''})",
-            fontsize=14)
+            fontsize=18)
         fig.tight_layout(rect=[0, 0, 1, 0.97])
         out_png = target_dir / f"spectrum_panels_src{src_id:02d}{suffix}.png"
         fig.savefig(out_png, dpi=180)

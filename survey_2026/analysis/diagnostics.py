@@ -182,12 +182,22 @@ def make_zoom_panel(stack_path, vcen_kms, outpath, family,
 
 
 def make_lineid_full(cube_paths, outpath, source_name, vcen_kms,
-                     region_radius_arcsec=2.0):
-    """Full-bandwidth mean spectrum from each native cube, salt lines marked."""
+                     region_radius_arcsec=2.0,
+                     peak_coord=None, mode="peak_pixel"):
+    """Full-bandwidth spectrum from each native cube, salt lines marked.
+
+    mode='peak_pixel' (default): extract the single-pixel spectrum at
+        ``peak_coord`` (preferred) or at ``source_name``'s catalog coord.
+        Best for unresolved hot-core lines that get diluted by averaging.
+    mode='aperture': mean spectrum over a ``region_radius_arcsec`` circle.
+    """
     from astropy.coordinates import SkyCoord
     import regions
-    src = sources.get_source(source_name)
-    coord = SkyCoord(src["RAJ2000"] * u.deg, src["DEJ2000"] * u.deg)
+    if peak_coord is not None:
+        coord = peak_coord
+    else:
+        src = sources.get_source(source_name)
+        coord = SkyCoord(src["RAJ2000"] * u.deg, src["DEJ2000"] * u.deg)
     reg = regions.CircleSkyRegion(coord, radius=region_radius_arcsec * u.arcsec)
 
     pl.figure(figsize=(16, 4 * max(1, len(cube_paths))))
@@ -197,15 +207,27 @@ def make_lineid_full(cube_paths, outpath, source_name, vcen_kms,
     for i, cp in enumerate(cube_paths, 1):
         try:
             c = SpectralCube.read(cp)
-            try:
-                sub = c.subcube_from_regions([reg])
-            except Exception:
-                # fallback to center pixel cutout (~100 pix box)
+            if mode == "peak_pixel":
+                # 1-pixel spectrum at the peak position.
+                wcs_c = c.wcs.celestial
+                xp, yp = wcs_c.world_to_pixel(coord)
+                xp = int(round(float(xp))); yp = int(round(float(yp)))
                 ny, nx = c.shape[1], c.shape[2]
-                sub = c[:, max(ny // 2 - 50, 0):ny // 2 + 50,
-                        max(nx // 2 - 50, 0):nx // 2 + 50]
-            spec = sub.mean(axis=(1, 2))
-        except Exception as e:
+                if 0 <= xp < nx and 0 <= yp < ny:
+                    spec = c[:, yp, xp]
+                else:
+                    spec = None
+            else:
+                try:
+                    sub = c.subcube_from_regions([reg])
+                except (ValueError, KeyError, IndexError):
+                    ny, nx = c.shape[1], c.shape[2]
+                    sub = c[:, max(ny // 2 - 50, 0):ny // 2 + 50,
+                            max(nx // 2 - 50, 0):nx // 2 + 50]
+                spec = sub.mean(axis=(1, 2))
+            if spec is None:
+                continue
+        except (OSError, ValueError, RuntimeError) as e:
             log.warning("could not extract spectrum from %s: %s", cp, e)
             continue
         freq = spec.spectral_axis.to(u.GHz).value

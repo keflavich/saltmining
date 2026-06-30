@@ -196,30 +196,32 @@ def fmt_kkms(val):
 
 
 def line_value(meas_df, bid, regex, integ_unit):
-    """Return (peak_T_K, integ_K_kms, line_name, snr) for the highest-SNR
-    line matching the regex at source==bid, or (None, None, None, None) if
-    no covered line.
-    Heuristic for "not in band": if NO row at all matches the regex anywhere
-    in the measurement set, return ('not in band', ...).
+    """Return (peak_T_K, integ_K_kms, line_name, snr, status, sigma_K).
+    sigma_K is the per-channel noise (K) used to compute 3σ upper limits
+    in cells with status='covered'.
     """
     matches = meas_df[meas_df["line"].astype(str).apply(lambda L: bool(regex.match(L)))]
     any_in_band = matches.shape[0] > 0
     if not any_in_band:
-        return None, None, None, None, "no"
+        return None, None, None, None, "no", None
     at_src = matches[matches["source"] == bid]
     if at_src.empty:
-        # in band but not measured at brightest source
-        return None, None, None, None, "covered"
+        # in band but not measured at brightest source; report 3σ at the
+        # tightest noise across any source covered by the same line set.
+        sig = float(np.nanmin(matches["sigma"])) if "sigma" in matches.columns else None
+        return None, None, None, None, "covered", sig
     best = at_src.nlargest(1, "snr").iloc[0]
     snr = float(best["snr"])
+    sig = float(best["sigma"]) if "sigma" in at_src.columns else None
     if snr < 5.0:
-        return None, None, None, snr, "covered"
+        return None, None, None, snr, "covered", sig
     return (
         float(best["peak_Kkms_or_unit"]),  # ambiguous name; treated as peak T
         float(best["integ"]),
         str(best["line"]),
         snr,
         "detected",
+        sig,
     )
 
 
@@ -329,20 +331,20 @@ def collect():
                 vsrc = None
                 vref_line = ""
         # line values
-        rrl_peak, rrl_int, rrl_line, _, rrl_status = line_value(meas, bid, RRL_RE, "")
-        h2o_peak, h2o_int, h2o_line, _, h2o_status = line_value(meas, bid, H2O_RE, "")
-        nacl_peak, nacl_int, nacl_line, _, nacl_status = line_value(meas, bid, NACL_RE, "")
-        kcl_peak, kcl_int, kcl_line, _, kcl_status = line_value(meas, bid, KCL_RE, "")
+        rrl_peak, rrl_int, rrl_line, _, rrl_status, rrl_sig = line_value(meas, bid, RRL_RE, "")
+        h2o_peak, h2o_int, h2o_line, _, h2o_status, h2o_sig = line_value(meas, bid, H2O_RE, "")
+        nacl_peak, nacl_int, nacl_line, _, nacl_status, nacl_sig = line_value(meas, bid, NACL_RE, "")
+        kcl_peak, kcl_int, kcl_line, _, kcl_status, kcl_sig = line_value(meas, bid, KCL_RE, "")
         rows.append(dict(
             name=name,
             field=field_label(name, r.get("alma_target_names", "")),
             ra=ra_str, dec=dec_str,
             pos_unc_arcsec=sigpos,
             vsrc_kms=vsrc, vref_line=vref_line,
-            rrl_line=rrl_line, rrl_peak_K=rrl_peak, rrl_int=rrl_int, rrl_status=rrl_status,
-            h2o_line=h2o_line, h2o_peak_K=h2o_peak, h2o_int=h2o_int, h2o_status=h2o_status,
-            nacl_line=nacl_line, nacl_peak_K=nacl_peak, nacl_int=nacl_int, nacl_status=nacl_status,
-            kcl_line=kcl_line, kcl_peak_K=kcl_peak, kcl_int=kcl_int, kcl_status=kcl_status,
+            rrl_line=rrl_line, rrl_peak_K=rrl_peak, rrl_int=rrl_int, rrl_status=rrl_status, rrl_sig_K=rrl_sig,
+            h2o_line=h2o_line, h2o_peak_K=h2o_peak, h2o_int=h2o_int, h2o_status=h2o_status, h2o_sig_K=h2o_sig,
+            nacl_line=nacl_line, nacl_peak_K=nacl_peak, nacl_int=nacl_int, nacl_status=nacl_status, nacl_sig_K=nacl_sig,
+            kcl_line=kcl_line, kcl_peak_K=kcl_peak, kcl_int=kcl_int, kcl_status=kcl_status, kcl_sig_K=kcl_sig,
             beam_arcsec=beam_arcsec, source_id=bid,
         ))
     # Dedupe by (ra, dec, field) within 1": two source-CSV rows that resolve
@@ -361,15 +363,23 @@ def collect():
     return pd.DataFrame(rows)
 
 
-def fmt_cell(peak, integ, status, lit_kind=None, lit_letter=None):
-    """One cell: peak in mK (always). If lit_kind says detection but we
-    have \\nodata or $<\\!3\\sigma$, decorate with the lit footnote marker.
+def fmt_cell(peak, integ, status, lit_kind=None, lit_letter=None, sigma_K=None):
+    """One cell. Detection: peak in mK. Covered non-detection: explicit 3σ
+    upper limit `<N` in mK. No coverage: \\nodata. Literature-detected
+    cells with no re-measurement are decorated with the lit footnote.
     """
     if status == "detected":
         if peak is None or not np.isfinite(peak):
             return r"\nodata"
         return f"{peak*1000:.1f}"
-    base = r"$<\!3\sigma$" if status == "covered" else r"\nodata"
+    if status == "covered":
+        if sigma_K is not None and np.isfinite(sigma_K):
+            ul_mK = 3.0 * sigma_K * 1000.0
+            base = f"$<{ul_mK:.1f}$"
+        else:
+            base = r"$<\!3\sigma$"
+    else:
+        base = r"\nodata"
     if lit_kind in ("det", "tent") and lit_letter:
         return rf"{base}\,\tablenotemark{{{lit_letter}}}"
     return base
@@ -405,9 +415,8 @@ def write_tex(df):
     # Literature footnote letters per target (for cells)
     fn_letter = {}
     out = []
-    out.append(r"\startlongtable")
     out.append(r"\begin{deluxetable}{lcccccccccc}")
-    out.append(r"\tabletypesize{\scriptsize}")
+    out.append(r"\tabletypesize{\tiny}")
     out.append(r"\tablecaption{Fundamental observational parameters per target. "
                r"Coordinates are the J2000 position of the brightest mm "
                r"continuum source within the analyzed ALMA field; the "
@@ -418,7 +427,8 @@ def write_tex(df):
                r"non-detections the literature value is reported (Ref.\ "
                r"line = `lit: \dots'). Detection cells give peak brightness "
                r"(mK) of the highest-SNR line in the species class. "
-               r"$<\!3\sigma$ marks coverage without a $\geq 5\sigma$ detection; "
+               r"`$<\!N$' in a covered cell is the $3\sigma$ upper limit "
+               r"in mK at the brightest source's peak pixel; "
                r"\nodata\ marks no spectral coverage of the species. "
                r"Species-cell footnote markers cite literature detections "
                r"for which we do not have a re-measured value here.\label{tab:obspars}}")
@@ -462,10 +472,10 @@ def write_tex(df):
         h2o_l = lit_kinds.get("H2O")
         nacl_l = lit_kinds.get("NaCl")
         kcl_l = lit_kinds.get("KCl")
-        rrl = fmt_cell(r["rrl_peak_K"], r["rrl_int"], r["rrl_status"], rrl_l, lit_letter)
-        h2o = fmt_cell(r["h2o_peak_K"], r["h2o_int"], r["h2o_status"], h2o_l, lit_letter)
-        nacl = fmt_cell(r["nacl_peak_K"], r["nacl_int"], r["nacl_status"], nacl_l, lit_letter)
-        kcl = fmt_cell(r["kcl_peak_K"], r["kcl_int"], r["kcl_status"], kcl_l, lit_letter)
+        rrl = fmt_cell(r["rrl_peak_K"], r["rrl_int"], r["rrl_status"], rrl_l, lit_letter, r["rrl_sig_K"])
+        h2o = fmt_cell(r["h2o_peak_K"], r["h2o_int"], r["h2o_status"], h2o_l, lit_letter, r["h2o_sig_K"])
+        nacl = fmt_cell(r["nacl_peak_K"], r["nacl_int"], r["nacl_status"], nacl_l, lit_letter, r["nacl_sig_K"])
+        kcl = fmt_cell(r["kcl_peak_K"], r["kcl_int"], r["kcl_status"], kcl_l, lit_letter, r["kcl_sig_K"])
         sig_str = f"{r['pos_unc_arcsec']:.3f}" if pd.notna(r["pos_unc_arcsec"]) else r"\nodata"
         v_str = f"{r['vsrc_kms']:+.1f}" if pd.notna(r["vsrc_kms"]) else r"\nodata"
         out.append(

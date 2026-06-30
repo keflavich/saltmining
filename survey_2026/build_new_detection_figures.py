@@ -46,36 +46,89 @@ LINE_PRIORITIES = [
 ]
 
 
+import pandas as pd  # noqa: E402
+
+_TARGET_COORDS = None
+
+
+def _target_coord(name):
+    global _TARGET_COORDS
+    if _TARGET_COORDS is None:
+        df = pd.read_csv(Path("/orange/adamginsburg/salt/survey_2026/data/sources_L4_d2.csv"))
+        _TARGET_COORDS = {r["name"]: (float(r["ra_deg"]), float(r["dec_deg"]))
+                          for _, r in df.iterrows()}
+    # Aliases for hyphen/underscore variants
+    return (_TARGET_COORDS.get(name)
+            or _TARGET_COORDS.get(name.replace("_", "-"))
+            or _TARGET_COORDS.get(name.replace("-", "_")))
+
+
+def _sep_arcsec(ra1, dec1, ra2, dec2):
+    dra = (ra1 - ra2) * np.cos(np.radians(dec2)) * 3600.0
+    ddec = (dec1 - dec2) * 3600.0
+    return float(np.sqrt(dra * dra + ddec * ddec))
+
+
 def best_proposal_dir(target_dir):
-    """Pick the proposal subdir with the most line_measurements."""
-    best = None
-    best_n = -1
+    """Pick the proposal subdir whose brightest on-target source is closest
+    to the catalog target coord (within 5"), tie-break by line-measurement
+    count. Falls back to plain max-lines if NO proposal has an on-target
+    source (i.e., the target has no matched analysis)."""
+    cat = _target_coord(target_dir.name)
+    candidates = []
     for p in sorted(target_dir.glob("2*")):
         meas = p / "line_measurements.csv"
         if not meas.exists():
             continue
         try:
-            n = sum(1 for _ in meas.open()) - 1
+            n_lines = sum(1 for _ in meas.open()) - 1
         except OSError:
-            n = 0
-        if n > best_n:
-            best_n = n
-            best = p
-    return best
+            n_lines = 0
+        bid_info = brightest_on_target_source(p, cat)
+        if bid_info is None:
+            continue
+        bid, sep = bid_info
+        candidates.append((sep, -n_lines, p, bid))
+    if not candidates:
+        return None
+    candidates.sort()  # smallest sep first, then most lines
+    sep0, _, pdir, _ = candidates[0]
+    if sep0 > 5.0:
+        return None
+    return pdir
 
 
-def brightest_source(prop_dir):
+def brightest_on_target_source(prop_dir, cat_coord):
+    """Return (src_id, sep_arcsec) for the brightest continuum source within
+    5\" of cat_coord. Falls back to the absolute brightest source if no
+    on-target match exists."""
     cont = prop_dir / "continuum_sources.csv"
     if not cont.exists():
         return None
-    import pandas as pd
     try:
         df = pd.read_csv(cont)
     except pd.errors.EmptyDataError:
         return None
     if df.empty or "peak_Jybeam" not in df.columns:
         return None
-    return int(df.loc[df["peak_Jybeam"].idxmax(), "id"])
+    if cat_coord is None:
+        bid = int(df.loc[df["peak_Jybeam"].idxmax(), "id"])
+        return bid, np.inf
+    df = df.copy()
+    df["sep"] = df.apply(lambda r: _sep_arcsec(float(r["ra_deg"]),
+                                                 float(r["dec_deg"]),
+                                                 *cat_coord), axis=1)
+    on = df[df["sep"] <= 5.0]
+    if on.empty:
+        return None
+    row = on.sort_values("peak_Jybeam", ascending=False).iloc[0]
+    return int(row["id"]), float(row["sep"])
+
+
+def brightest_source(prop_dir):
+    cat_coord = _target_coord(prop_dir.parent.name)
+    info = brightest_on_target_source(prop_dir, cat_coord)
+    return info[0] if info else None
 
 
 def find_mom0(prop_dir, src_id, line_label, pattern):

@@ -232,10 +232,15 @@ def main():
                  r"\colhead{SNR} & \colhead{$T_B$ (K)} & "
                  r"\colhead{Contam.} & \colhead{Flag}}")
     lines.append(r"\startdata")
+    try:
+        import build_nacl_rrl_table as v1
+    except ImportError:
+        v1 = None
     last_target = None
     for _, r in (out.sort_values(["target", "species", "rest_GHz"])
                   .iterrows() if not out.empty else iter([])):
-        target = str(r["target"])
+        raw_target = str(r["target"])
+        target = v1._display_name(raw_target) if v1 else raw_target
         first_row = (target != last_target)
         last_target = target
         line_tex = (str(r["line"]).replace("_", r"\_"))

@@ -201,11 +201,16 @@ def main():
         r"(mJy) & ($''$) & class}",
         r"\startdata",
     ]
+    try:
+        import build_nacl_rrl_table as v1
+    except ImportError:
+        v1 = None
     for _, r in out.iterrows():
         L4 = r["lbol_lsun"] / 1e4
+        disp = v1._display_name(str(r["name"])) if v1 else str(r["name"])
         lines.append(
             " & ".join([
-                r["name"].replace("_", r"\_"),
+                disp.replace("_", r"\_"),
                 str(r["parent"]),
                 fmt_num(r["dist_kpc"]),
                 fmt_num(L4),

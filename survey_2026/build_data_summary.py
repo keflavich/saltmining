@@ -145,24 +145,24 @@ _LIT_MM_SUFFIX_RE = re.compile(r"(?i)(?:-mm[0-9a-z]+|\(N\)-SMA[0-9]+|-IRS[0-9]+|
 
 def source_label(target: str, src_id: int, alt_names: str,
                   brightness_rank: int) -> str:
-    """Merged Source identifier for the data-summary table.
-    Priority: literature mm name → common name (+ mm{rank} if name doesn't
-    already encode a mm/component suffix) → IRASmm{rank} → targetmm{rank}.
+    """Merged Source identifier for the data-summary table. The base label
+    uses the SAME display name as Table 1 (build_target_table.common_name_for):
+    COMMON_NAME → 'IRAS XXXXX+YYYY' from alma_target_names → bare target.
+    Brightness rank is appended unless the base label already encodes a
+    mm/component suffix (e.g. 'NGC 6334I-mm1b', 'MonR2-IRS2').
     """
     key = (target, int(src_id))
     if key in LIT_MM_NAME:
         return LIT_MM_NAME[key]
     try:
-        from build_target_table import COMMON_NAME
+        from build_target_table import COMMON_NAME, alma_target_names_to_iras
     except ImportError:
         COMMON_NAME = {}
-    common = COMMON_NAME.get(target)
-    if common:
-        if _LIT_MM_SUFFIX_RE.search(common):
-            return common if brightness_rank == 1 else f"{common}-mm{brightness_rank}"
-        return f"{common}-mm{brightness_rank}"
-    handle = short_handle(target, alt_names)
-    return f"{handle}mm{brightness_rank}"
+        alma_target_names_to_iras = lambda _s: None
+    base = COMMON_NAME.get(target) or alma_target_names_to_iras(alt_names) or target
+    if _LIT_MM_SUFFIX_RE.search(base):
+        return base if brightness_rank == 1 else f"{base}-mm{brightness_rank}"
+    return f"{base}-mm{brightness_rank}"
 
 
 def brightness_rank_map(cont_csv: Path):

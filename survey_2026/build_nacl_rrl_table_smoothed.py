@@ -262,7 +262,7 @@ def write_tex_smoothed(df: pd.DataFrame):
         v10_3 = fmt_smoothed_cell(r["peak_smoothed_K"], r["sigma_smoothed_K"], det)
         beam_au = r["beam_native_au"]
         beam_str = f"{beam_au:.0f}" if np.isfinite(beam_au) else r"\nodata"
-        target = str(r["target"]).replace("_", r"\_")
+        target = v1._display_name(str(r["target"])).replace("_", r"\_")
         lines.append(
             f"{target} & {r['proposal']} & {v1.fmt_line(r['line'])} & "
             f"{int(r['src_id'])} & {beam_str} & "

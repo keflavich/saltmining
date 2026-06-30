@@ -82,15 +82,35 @@ def kind_to_cell(kind):
     return "?"
 
 
-def latex_source_name(name):
-    """Display name: use COMMON_NAME from build_target_table where known,
-    else escape underscores."""
-    # Import lazily to avoid hard-failing if module renamed
+def _alt_names_lookup():
+    """Build target -> alma_target_names map for IRAS-fallback display."""
+    csv = ROOT / "data/sources_L4_d2.csv"
+    if not csv.exists():
+        return {}
     try:
-        from build_target_table import COMMON_NAME
+        df = pd.read_csv(csv)
+    except pd.errors.EmptyDataError:
+        return {}
+    alt = df["alma_target_names"] if "alma_target_names" in df.columns else pd.Series([""] * len(df))
+    return dict(zip(df["name"], alt.fillna("")))
+
+
+_ALT_BY_TARGET = None
+
+
+def latex_source_name(name):
+    """Display name: COMMON_NAME → IRAS XXXXX+YYYY → bare target."""
+    global _ALT_BY_TARGET
+    if _ALT_BY_TARGET is None:
+        _ALT_BY_TARGET = _alt_names_lookup()
+    try:
+        from build_target_table import COMMON_NAME, alma_target_names_to_iras
     except ImportError:
         COMMON_NAME = {}
-    base = COMMON_NAME.get(name, name)
+        alma_target_names_to_iras = lambda _s: None
+    base = COMMON_NAME.get(name)
+    if not base:
+        base = alma_target_names_to_iras(_ALT_BY_TARGET.get(name, "")) or name
     return base.replace("_", r"\_")
 
 
@@ -135,8 +155,13 @@ def main():
                r"\colhead{RRL} & \colhead{COMs} & \colhead{SiS} & "
                r"\colhead{SO} & \colhead{PN}}")
     out.append(r"\startdata")
+    seen_names = set()
     for _, r in df.iterrows():
         tgt = str(r["target"])
+        disp = latex_source_name(tgt)
+        if disp in seen_names:
+            continue
+        seen_names.add(disp)
         manual = MANUAL.get(tgt, {})
         cells = [latex_source_name(tgt), manual.get("disk", "?")]
         for sp in SPECIES_COLS:

@@ -299,9 +299,31 @@ def main():
         r" & " + " & ".join(["(mK)"] * len(SPECIES)) + r"}",
         r"\startdata",
     ]
+    try:
+        from build_target_table import COMMON_NAME, alma_target_names_to_iras
+    except ImportError:
+        COMMON_NAME = {}
+        alma_target_names_to_iras = lambda _s: None
+    # Build target -> alma_target_names map for IRAS-fallback display.
+    alt_col = src["alma_target_names"] if "alma_target_names" in src.columns else pd.Series([""] * len(src))
+    alt_by_target = dict(zip(src["name"], alt_col.fillna("")))
+
+    def display_name(tgt: str) -> str:
+        common = COMMON_NAME.get(tgt)
+        if common:
+            return common
+        iras = alma_target_names_to_iras(alt_by_target.get(tgt, ""))
+        if iras:
+            return iras
+        return tgt
+
     out_sorted = out.sort_values("target")
+    seen_names = set()
     for _, r in out_sorted.iterrows():
-        tgt = str(r["target"]).replace("_", r"\_")
+        tgt = display_name(str(r["target"])).replace("_", r"\_")
+        if tgt in seen_names:
+            continue
+        seen_names.add(tgt)
         flags = str(r.get("warning_flags", "") or "")
         cells = [fmt_cell(r[f"{sp}_kind"], r[f"{sp}_K"], marker_for(sp, flags))
                   for sp in SPECIES]

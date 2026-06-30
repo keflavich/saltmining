@@ -116,6 +116,34 @@ def measure_native(npz_path: Path):
     return dict(dv_native=dv, sigma_native=sigma, peak=float(np.nanmax(s)))
 
 
+_ALT_BY_TARGET = None
+
+
+def _display_name(name: str) -> str:
+    """Match the naming used by Tables 1/4/5 (COMMON_NAME → IRAS → target)."""
+    global _ALT_BY_TARGET
+    if _ALT_BY_TARGET is None:
+        csv = ROOT / "data/sources_L4_d2.csv"
+        if csv.exists():
+            try:
+                df = pd.read_csv(csv)
+                col = df["alma_target_names"] if "alma_target_names" in df.columns else pd.Series([""] * len(df))
+                _ALT_BY_TARGET = dict(zip(df["name"], col.fillna("")))
+            except pd.errors.EmptyDataError:
+                _ALT_BY_TARGET = {}
+        else:
+            _ALT_BY_TARGET = {}
+    try:
+        from build_target_table import COMMON_NAME, alma_target_names_to_iras
+    except ImportError:
+        COMMON_NAME = {}
+        alma_target_names_to_iras = lambda _s: None
+    base = COMMON_NAME.get(name)
+    if not base:
+        base = alma_target_names_to_iras(_ALT_BY_TARGET.get(name, "")) or name
+    return base
+
+
 def sigma_at_dv(sigma_native: float, dv_native: float, dv_target: float) -> float:
     if dv_target <= dv_native:
         return sigma_native
@@ -229,7 +257,7 @@ def write_tex(df: pd.DataFrame):
         v10_3 = fmt_value(r["peak_K"], r["sigma_10kms_300au_K"], det)
         beam_au = r["beam_native_au"]
         beam_str = f"{beam_au:.0f}" if np.isfinite(beam_au) else r"\nodata"
-        target = str(r["target"]).replace("_", r"\_")
+        target = _display_name(str(r["target"])).replace("_", r"\_")
         out.append(
             f"{target} & {r['proposal']} & {fmt_line(r['line'])} & "
             f"{int(r['src_id'])} & {beam_str} & "

@@ -124,8 +124,13 @@ def write_tex(df: pd.DataFrame):
                  r"\colhead{$3\sigma$ ($10$\,\kms)} \\")
     lines.append(r"& & & & (\kms) & (mK) & (mK) }")
     lines.append(r"\startdata")
+    try:
+        import build_nacl_rrl_table as v1
+    except ImportError:
+        v1 = None
     for _, r in df.iterrows():
-        target_esc = r['target'].replace('_', r'\_')
+        disp = v1._display_name(str(r['target'])) if v1 else str(r['target'])
+        target_esc = disp.replace('_', r'\_')
         lines.append(
             f"{target_esc} & {r['proposal']} & "
             f"{fmt_line(r['line'])} & {int(r['brightest_source_id'])} & "

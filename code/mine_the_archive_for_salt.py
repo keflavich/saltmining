@@ -37,7 +37,7 @@ for row in result:
         for fn in localfiles:
             print(fn)
             cube = SpectralCube.read(fn)
-            lines = cube.find_lines(chemical_name='NaCl|KCl', line_lists=['CDMS'])
+            lines = cube.find_lines(chemical_name='NaCl|KCl|H2O', line_lists=['CDMS'])
             if any(lines):
                 lines = splatutils.minimize_table(lines)
 

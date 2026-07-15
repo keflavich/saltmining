@@ -35,6 +35,8 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 
+from kelvin import conversion_factor
+
 warnings.filterwarnings("ignore")
 
 ROOT = Path("/orange/adamginsburg/salt/survey_2026")
@@ -157,10 +159,15 @@ def sigma_at_300au(sigma: float, beam_native_au: float, target_au: float = 300.0
 
 
 def fmt_value(peak_K, sigma_K, detected):
-    """Detection -> peak (mK); UL -> '<' 3sigma (mK)."""
+    """Detection -> peak (K); UL -> '<' 3sigma (K); \nodata if unit
+    conversion was unavailable (missing cube header)."""
+    from kelvin import fmt_K
+    ref = peak_K if detected else sigma_K
+    if ref is None or not np.isfinite(ref):
+        return r"\nodata"
     if detected:
-        return f"{peak_K*1000.0:.1f}"
-    return f"$<${3.0*sigma_K*1000.0:.1f}"
+        return fmt_K(peak_K)
+    return f"$<${fmt_K(3.0*sigma_K)}"
 
 
 def collect(distances: dict[str, float]):
@@ -194,17 +201,25 @@ def collect(distances: dict[str, float]):
                 continue
             # native beam from continuum source's spectral cube (proxy: any cube)
             beam_arcsec = None
+            conv_K = np.nan
             if meas_csv.exists():
                 try:
                     mdf = pd.read_csv(meas_csv)
-                    cubes_for_line = mdf[mdf["line"] == line]["cube"].dropna().tolist()
+                    lrows = mdf[mdf["line"] == line]
+                    cubes_for_line = lrows["cube"].dropna().tolist()
                     if cubes_for_line:
                         cube_full = ROOT / "uvdata" / proposal / target / cubes_for_line[0]
                         beam_arcsec = beam_arcsec_for_cube(str(cube_full))
+                        rest_GHz = float(lrows["rest_GHz"].iloc[0]) \
+                            if "rest_GHz" in lrows.columns else np.nan
+                        conv_K = conversion_factor(str(cube_full), rest_GHz)
                 except (KeyError, pd.errors.EmptyDataError):
                     pass
             beam_au = (beam_arcsec * d_kpc * 1000.0) if beam_arcsec else np.nan
-            sn = m["sigma_native"]
+            # spec.npz values are in the cube's native unit (Jy/beam for
+            # archive products); convert to true brightness temperature
+            sn = m["sigma_native"] * conv_K
+            peak_K = m["peak"] * conv_K
             dvn = m["dv_native"]
             sig_1 = sigma_at_dv(sn, dvn, 1.0)
             sig_10 = sigma_at_dv(sn, dvn, 10.0)
@@ -216,7 +231,8 @@ def collect(distances: dict[str, float]):
                 "src_id": bid, "dv_native_kms": dvn,
                 "beam_native_arcsec": beam_arcsec,
                 "beam_native_au": beam_au,
-                "peak_K": m["peak"], "detected": det,
+                "jtok_factor": conv_K,
+                "peak_K": peak_K, "detected": det,
                 "sigma_1kms_native_K": sig_1,
                 "sigma_10kms_native_K": sig_10,
                 "sigma_1kms_300au_K": sig_1_300,
@@ -230,24 +246,37 @@ def fmt_line(line):
 
 
 def write_tex(df: pd.DataFrame):
+    # Drop upper limits whose synthesized beam exceeds 500 AU at the source
+    # distance: such limits cannot constrain a compact (<500 AU) salt disk and
+    # are uninformative. Detections are always kept.
+    n0 = len(df)
+    keep = df["detected"].astype(bool) | (df["beam_native_au"] <= 500.0)
+    df = df[keep].copy()
+    print(f"  dropped {n0 - len(df)} uninformative UL rows (beam > 500 AU)")
     df = df.sort_values(["target", "proposal", "line"])
     out = []
     out.append(r"\startlongtable")
     out.append(r"\begin{deluxetable*}{lllcccccc}")
-    out.append(r"\rotate")
+
     out.append(r"\tablecaption{NaCl and radio recombination-line (RRL) detections and "
                r"$3\sigma$ upper limits toward the brightest mm continuum source in "
-               r"each target field, per ALMA program. Values in mK; \nodata\ indicates "
+               r"each target field, per ALMA program. Values in K; \nodata\ indicates "
                r"that the corresponding line was not in the recorded spectrum set. "
                r"Native columns use the cube's own synthesized beam; the $300$\,AU "
                r"columns smooth the cube spatially to a $300$\,AU effective beam at "
-               r"the source distance (point-source brightness scaling).\label{tab:naclrrl}}")
+               r"the source distance (point-source brightness scaling). All values "
+               r"are brightness temperatures in K, converted from the cube-native "
+               r"Jy\,beam$^{-1}$ scale with each cube's synthesized beam. "
+               r"Upper-limit rows whose synthesized beam exceeds 500\,AU at the "
+               r"source distance are omitted, since such limits cannot constrain "
+               r"a compact ($<$500\,AU) salt disk."
+               r"\label{tab:naclrrl}}")
     out.append(r"\tablehead{")
     out.append(r"\colhead{Source} & \colhead{Program} & \colhead{Line} & "
                r"\colhead{Src} & \colhead{$\theta_\mathrm{beam}$} & "
                r"\colhead{$1$\,\kms, nat.} & \colhead{$10$\,\kms, nat.} & "
                r"\colhead{$1$\,\kms, $300$\,AU} & \colhead{$10$\,\kms, $300$\,AU} \\")
-    out.append(r" & & & & (AU) & (mK) & (mK) & (mK) & (mK) }")
+    out.append(r" & & & & (AU) & (K) & (K) & (K) & (K) }")
     out.append(r"\startdata")
     for _, r in df.iterrows():
         det = bool(r["detected"])
@@ -265,7 +294,9 @@ def write_tex(df: pd.DataFrame):
         )
     out.append(r"\enddata")
     out.append(r"\tablecomments{For each row, the brightest mm continuum source in the "
-               r"target field is taken as a proxy for the most massive YSO. "
+               r"target field is taken as a proxy for the most massive YSO; "
+               r"`Src' is that source's running ID in the pipeline continuum "
+               r"catalog of the field (Table~\ref{tab:obspars} uses the same IDs). "
                r"Detections ($\mathrm{S/N} \geq 5$) report the peak brightness temperature; "
                r"non-detections report $3\sigma$ upper limits. Channel-width scaling: "
                r"$\sigma_T(\Delta v) = \sigma_T(\Delta v_\mathrm{nat}) \sqrt{\Delta v_\mathrm{nat}/\Delta v}$. "

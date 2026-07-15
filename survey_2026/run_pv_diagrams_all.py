@@ -27,6 +27,13 @@ def _vlsr(target):
                or d.get(target.replace("_", "-")))
         if rec and rec.get("v_LSR_kms") is not None:
             return float(rec["v_LSR_kms"])
+    # fall back to the survey-wide obs_params vsrc (covers all targets)
+    import pandas as pd
+    obs = pd.read_csv(ROOT / "data/obs_params.csv")
+    row = obs[obs["name"] == target]
+    if len(row) and pd.notna(row.iloc[0]["vsrc_kms"]):
+        return float(row.iloc[0]["vsrc_kms"])
+    print(f"WARNING: no vlsr for {target}; using 0.0")
     return 0.0
 
 

@@ -122,10 +122,27 @@ def is_com_line(line: str) -> bool:
 
 
 def main():
+    import sys
+    targets_filter = set(sys.argv[1:]) if len(sys.argv) > 1 else None
     rows = []
+    # Preserve existing rows for targets we're not recomputing.
+    existing = {}
+    if targets_filter and OUT.exists():
+        try:
+            df_prev = pd.read_csv(OUT)
+            for _, r in df_prev.iterrows():
+                key = (str(r["target"]), str(r["proposal"]))
+                existing[key] = r.to_dict()
+        except pd.errors.EmptyDataError:
+            pass
     for proposal_dir in sorted(ANALYSIS.glob("*/2*")):
         target = proposal_dir.parent.name
         proposal = proposal_dir.name
+        if targets_filter and target not in targets_filter:
+            # Keep pre-existing row unchanged
+            if (target, proposal) in existing:
+                rows.append(existing[(target, proposal)])
+            continue
         meas = proposal_dir / "line_measurements.csv"
         if not meas.exists():
             continue

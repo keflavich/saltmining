@@ -106,6 +106,13 @@ def main():
     ap.add_argument("--guide-line", default=None,
                     help="line name to use for mom1; e.g. H2O_5_15-4_22_232")
     ap.add_argument("--length-arcsec", type=float, default=4.0)
+    ap.add_argument("--crop-offset-pix", type=int, default=70,
+                    help="crop PV offset axis to this many pixels around slit "
+                         "center (0 = no crop). Default 70 keeps a tight "
+                         "target-centred window.")
+    ap.add_argument("--inches-per-pix", type=float, default=0.04,
+                    help="square-pixel scaling for the PV PNG; figure height "
+                         "scales linearly with freq channels so output is tall.")
     args = ap.parse_args()
 
     src_csv = pd.read_csv(ROOT / "data/sources_L4_d2.csv")
@@ -122,19 +129,21 @@ def main():
         raise SystemExit(f"no on-target source for {args.target}")
     if args.proposal:
         pdir = ANALYSIS / args.target / args.proposal
-        # pick brightest on-target source in that specific proposal
-        df = pd.read_csv(pdir / "continuum_sources.csv")
-        df["sep"] = np.sqrt(((df["ra_deg"] - ra_cat) * np.cos(np.radians(dec_cat))) ** 2
-                              + (df["dec_deg"] - dec_cat) ** 2) * 3600.0
-        on = df[df["sep"] <= 5.0]
-        if on.empty:
-            raise SystemExit("no on-target src in proposal")
-        rr = on.sort_values("peak_Jybeam", ascending=False).iloc[0]
-        bid = int(rr["id"]); ra = float(rr["ra_deg"]); dec = float(rr["dec_deg"])
     else:
-        pdir, bid, ra, dec = info
+        pdir = info[0]
+    # EVERY cataloged continuum source gets its own PV slit (each with its
+    # own max-gradient direction), not just the brightest one.
+    df = pd.read_csv(pdir / "continuum_sources.csv")
+    src_list = [(int(r["id"]), float(r["ra_deg"]), float(r["dec_deg"]))
+                for _, r in df.iterrows()]
+    print(f"{args.target} -> {pdir.name}: {len(src_list)} sources")
+    for bid, ra, dec in src_list:
+        _pv_for_source(args, pdir, bid, ra, dec)
+
+
+def _pv_for_source(args, pdir, bid, ra, dec):
     coord = SkyCoord(ra * u.deg, dec * u.deg)
-    print(f"{args.target} -> {pdir.name} src_{bid:02d} ({ra:.5f}, {dec:.5f})")
+    print(f"  == src_{bid:02d} ({ra:.5f}, {dec:.5f})")
 
     # Pick a guide line to compute the gradient PA.
     guide_label = args.guide_line or "H2O_5_15-4_22_232"
@@ -144,7 +153,8 @@ def main():
         # fall back to any mom1
         mom1s = sorted(sdir.glob("*_mom1.fits"))
         if not mom1s:
-            raise SystemExit(f"no mom1 for {args.target}; can't compute PA")
+            print(f"  ! src_{bid:02d}: no mom1; skipping")
+            return
         mom1_path = mom1s[0]
         guide_label = mom1_path.stem.replace("_mom1", "").replace(f"source_{bid:02d}_", "")
         print(f"  fallback guide line {guide_label}")
@@ -157,7 +167,7 @@ def main():
     pa = _max_gradient_pa(mom1, sy, sx)
     print(f"  guide={guide_label}  max-gradient PA = {pa:+.1f} deg")
 
-    out_dir = pdir / "pv"
+    out_dir = pdir / "pv" / f"src_{bid:02d}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     meas = pd.read_csv(pdir / "line_measurements.csv")
@@ -183,26 +193,78 @@ def main():
         spw_tok = cn.split("_sci.")[-1].split(".cube")[0]
         out_fits = out_dir / f"pv_{spw_tok}.fits"
         pv.writeto(out_fits, overwrite=True)
-        # render PNG
+        # render PNG: crop offset window + square pixels (tall figure).
         data = pv.data
         if data.size == 0:
             continue
-        sigma = float(mad_std(data, ignore_nan=True))
-        fig, ax = plt.subplots(figsize=(12, 4), constrained_layout=True)
-        med = float(np.nanmedian(data))
+        ny_pv, nx_pv = data.shape
+        cx = nx_pv // 2
+        if args.crop_offset_pix > 0 and args.crop_offset_pix < nx_pv:
+            half = args.crop_offset_pix // 2
+            x0 = max(0, cx - half); x1 = min(nx_pv, cx + half)
+            data_c = data[:, x0:x1]
+            x_origin = x0
+        else:
+            data_c = data
+            x_origin = 0
+        H, W = data_c.shape
+        sigma = float(mad_std(data_c, ignore_nan=True))
+        med = float(np.nanmedian(data_c))
+        # high-contrast two-regime scale: white->black over -3..+3 sigma,
+        # black->orange from +3 sigma to the peak
         vmin = med - 3 * sigma
-        vmax = med + 15 * sigma
-        ax.imshow(data, origin="lower", aspect="auto",
-                   cmap="inferno", vmin=vmin, vmax=vmax)
-        ax.set_title(f"{args.target}  src_{bid:02d}  PV  {spw_tok}  "
-                      f"(PA={pa:+.1f}° max-grad)",
-                      fontsize=12)
-        ax.set_xlabel("offset along slit (pix)", fontsize=11)
-        ax.set_ylabel("freq (chan)", fontsize=11)
+        peak_val = float(np.nanmax(data_c))
+        vmax = max(peak_val, med + 6 * sigma)
+        import matplotlib.colors as mcolors
+        fbreak = min(0.95, max(0.05, (med + 3 * sigma - vmin) / (vmax - vmin)))
+        cmap_hc = mcolors.LinearSegmentedColormap.from_list(
+            "pv_hc", [(0.0, "white"), (fbreak, "black"), (1.0, "orange")])
+        # physical axes: offset (arcsec) x frequency (GHz) from the PV WCS
+        ph = pv.header
+        cd1 = float(ph.get("CDELT1", 0.0))
+        if str(ph.get("CUNIT1", "deg")).strip().lower() in ("deg", "degree"):
+            cd1_as = cd1 * 3600.0
+        else:
+            cd1_as = cd1  # already arcsec
+        # offset axis: pvextractor puts CRVAL1=0 at the slit START; re-zero
+        # to the slit CENTER so the source sits at offset 0
+        x_lo = (x_origin - (nx_pv - 1) / 2.0) * cd1_as
+        x_hi = x_lo + W * cd1_as
+        crp2 = float(ph.get("CRPIX2", 1.0)); crv2 = float(ph.get("CRVAL2", 0.0))
+        cd2 = float(ph.get("CDELT2", 1.0))
+        f_lo = (crv2 + (1 - crp2) * cd2) / 1e9        # GHz
+        f_hi = (crv2 + (H - crp2) * cd2) / 1e9
+        ipp = args.inches_per_pix
+        fig_w = max(4.0, W * ipp + 1.8)
+        fig_h = max(6.0, H * ipp + 1.8)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
+        ax.imshow(data_c, origin="lower",
+                  cmap=cmap_hc, vmin=vmin, vmax=vmax,
+                  extent=(x_lo, x_hi, f_lo, f_hi))
+        # square DATA pixels: one offset pixel rendered as wide as one
+        # frequency channel is tall
+        ax.set_aspect(abs((x_hi - x_lo) / W) / abs((f_hi - f_lo) / H))
+        # vertical dashed line at the continuum peak (slit center)
+        ax.axvline(0.0, color="0.4", linestyle="--", linewidth=0.8, alpha=0.8)
+        ax.set_title(f"{args.target}  src_{bid:02d}  PV  {spw_tok}\n"
+                     f"(PA={pa:+.1f}° max-grad)", fontsize=12)
+        ax.set_xlabel("offset along slit (\")", fontsize=11)
+        ax.set_ylabel("frequency (GHz)", fontsize=11)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{v:.2f}"))
         ax.tick_params(labelsize=10)
         fig.savefig(out_dir / f"pv_{spw_tok}.png", dpi=200)
         plt.close(fig)
-        print(f"  wrote {out_fits.name} + .png")
+        print(f"  wrote {out_fits.name} + .png  ({H}x{W} px, fig={fig_w:.1f}x{fig_h:.1f}in)")
+
+    # Save slit geometry so downstream tools (diagnostic plots) can overlay
+    # the PV path on mom1 maps.
+    geom = {"target": args.target, "proposal": pdir.name,
+            "src_id": bid, "ra_deg": float(ra), "dec_deg": float(dec),
+            "pa_deg": float(pa), "length_arcsec": float(args.length_arcsec),
+            "guide_line": guide_label,
+            "crop_offset_pix": int(args.crop_offset_pix)}
+    import json as _json
+    (out_dir / "pv_slit_geometry.json").write_text(_json.dumps(geom, indent=2))
 
 
 if __name__ == "__main__":

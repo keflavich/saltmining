@@ -26,6 +26,8 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 
+from kelvin import fmt_K as _fmtK
+
 warnings.filterwarnings("ignore")
 
 ROOT = Path("/orange/adamginsburg/salt/survey_2026")
@@ -90,6 +92,8 @@ LIT_MM_NAME = {
     ("I16547-4247", 2):  "I16547B",
     ("Orion-SrcI", 1):   "Orion-SrcI",
     ("Orion-BN", 1):     "Orion-BN",
+    ("Orion-BN", 2):     "Orion-BN",
+    ("Orion-BN", 3):     "Orion-BN",
     ("OrionBN", 1):      "Orion-BN",
     ("MonR2-IRS3", 1):   "MonR2-IRS3",
     ("MonR2-IRS2", 1):   "MonR2-IRS2",
@@ -191,6 +195,45 @@ def brightest_source_id(cont_csv: Path):
     return int(df.loc[df["peak_Jybeam"].idxmax(), "id"])
 
 
+def preferred_source_id(cont_csv: Path, target: str, sources_df: pd.DataFrame,
+                          tol_arcsec: float = 1.5):
+    """Return the continuum source id whose position best matches the target's
+    ICRS coord in sources_L4_d2.csv (within tol). Falls back to
+    ``brightest_source_id`` when no such position match exists.
+
+    This matters for fields like Orion-BN where the FOV also contains a
+    brighter neighbour (Orion-SrcI), so the naive "brightest" pick would
+    silently mis-label the row.
+    """
+    if not cont_csv.exists() or cont_csv.stat().st_size == 0:
+        return None
+    try:
+        df = pd.read_csv(cont_csv)
+    except pd.errors.EmptyDataError:
+        return None
+    if df.empty or "peak_Jybeam" not in df.columns:
+        return None
+    row = sources_df[sources_df["name"] == target]
+    if row.empty:
+        return brightest_source_id(cont_csv)
+    ra_col = "ra_deg" if "ra_deg" in row.columns else None
+    dec_col = "dec_deg" if "dec_deg" in row.columns else None
+    if ra_col is None or dec_col is None:
+        return brightest_source_id(cont_csv)
+    tra = float(row.iloc[0][ra_col])
+    tdec = float(row.iloc[0][dec_col])
+    if not (np.isfinite(tra) and np.isfinite(tdec)):
+        return brightest_source_id(cont_csv)
+    if "ra_deg" not in df.columns or "dec_deg" not in df.columns:
+        return brightest_source_id(cont_csv)
+    dra = (df["ra_deg"].astype(float) - tra) * np.cos(np.radians(tdec)) * 3600.0
+    ddec = (df["dec_deg"].astype(float) - tdec) * 3600.0
+    sep = np.sqrt(dra * dra + ddec * ddec)
+    if sep.min() > tol_arcsec:
+        return brightest_source_id(cont_csv)
+    return int(df.loc[sep.idxmin(), "id"])
+
+
 def beam_for_proposal(proposal_dir: Path):
     """Estimate representative cube beam in arcsec from the first cube
     referenced in line_measurements.csv."""
@@ -230,17 +273,40 @@ def beam_for_proposal(proposal_dir: Path):
 
 
 def native_noise_for(proposal_dir: Path, bid: int):
-    """Median sigma_native (K) across all spec.npz under source_{bid}/."""
+    """Median sigma_native (true K) across all spec.npz under source_{bid}/.
+
+    spec.npz sigma is in the cube's native unit (Jy/beam for archive
+    products); convert per line via the cube referenced in
+    line_measurements.csv before taking the median.
+    """
+    from kelvin import conversion_factor
     sd = proposal_dir / f"source_{bid:02d}"
     if not sd.is_dir():
         return None, None
+    line_conv = {}
+    meas_csv = proposal_dir / "line_measurements.csv"
+    if meas_csv.exists():
+        try:
+            mdf = pd.read_csv(meas_csv)
+        except pd.errors.EmptyDataError:
+            mdf = pd.DataFrame()
+        if not mdf.empty and {"line", "cube"} <= set(mdf.columns):
+            for _, mr in mdf.drop_duplicates("line").iterrows():
+                cube = mr.get("cube")
+                if not isinstance(cube, str) or not cube:
+                    continue
+                cube_full = UVDIR / proposal_dir.name / proposal_dir.parent.name / cube
+                rest = float(mr.get("rest_GHz", np.nan))
+                line_conv[str(mr["line"])] = conversion_factor(str(cube_full), rest)
     sigs = []
     dvs = []
     for npz in sd.glob("*.spec.npz"):
         d = np.load(npz)
         if not {"vaxis", "sigma"} <= set(d.files):
             continue
-        s = float(d["sigma"])
+        line = npz.name.replace(".spec.npz", "")
+        conv = line_conv.get(line, np.nan)
+        s = float(d["sigma"]) * conv
         v = np.asarray(d["vaxis"], dtype=float)
         if v.size < 2 or not np.isfinite(s):
             continue
@@ -294,10 +360,36 @@ def vwidth_for(proposal_dir: Path, bid: int):
 _VET_DF_CACHE = None
 
 
+_VET_OVERRIDE_CACHE = None
+
+
+def _vet_override(target, proposal, bid, species):
+    """Manual expert verdicts (data/manual_vet_overrides.csv) that take
+    precedence over the automated strict-vet: e.g. PV-based rejection of
+    double-horned profiles built from two narrow contaminant lines."""
+    global _VET_OVERRIDE_CACHE
+    if _VET_OVERRIDE_CACHE is None:
+        vp = ROOT / "data/manual_vet_overrides.csv"
+        _VET_OVERRIDE_CACHE = pd.read_csv(vp) if vp.exists() else pd.DataFrame()
+    if _VET_OVERRIDE_CACHE.empty:
+        return None
+    g = _VET_OVERRIDE_CACHE[
+        (_VET_OVERRIDE_CACHE["target"] == target)
+        & (_VET_OVERRIDE_CACHE["proposal"] == proposal)
+        & (_VET_OVERRIDE_CACHE["src_id"] == bid)
+        & (_VET_OVERRIDE_CACHE["species"] == species)]
+    if g.empty:
+        return None
+    return str(g["verdict"].iloc[0])
+
+
 def _strict_vet_pass(target, proposal, bid, species):
     """Return REAL/SUSPECT/None per data/all_detection_vet.csv for this
     (target, proposal, bid, species). REAL means v0 ground state passes
-    OR >=2 transitions pass."""
+    OR >=2 transitions pass. Manual overrides win."""
+    ov = _vet_override(target, proposal, bid, species)
+    if ov is not None:
+        return ov
     global _VET_DF_CACHE
     if _VET_DF_CACHE is None:
         vp = ROOT / "data/all_detection_vet.csv"
@@ -362,7 +454,7 @@ def detections_at_brightest(proposal_dir: Path, bid: int, target=None):
     nacl_raw = bool(sub[sub["group"] == "NaCl"].shape[0])
     kcl_raw = bool(sub[sub["group"] == "KCl"].shape[0])
     h2o_raw = bool(sub[sub["group"] == "H2O"].shape[0])
-    return dict(rrl=rrl,
+    return dict(rrl=_gated("RRL", rrl),
                 nacl=_gated("NaCl", nacl_raw),
                 kcl=_gated("KCl", kcl_raw),
                 h2o=_gated("H2O", h2o_raw),
@@ -417,6 +509,9 @@ def apply_lit_override(species_key, mine_bool, lit_kinds):
     if lit_kind == "na":
         return r"\nodata"
     return "n"
+    # (the na-branch above is for lit-only kinds queried before pipeline
+    # measurement; the main _merge_cell below handles the pipeline-vs-lit
+    # merge where 'na' means "lit didn't cover" and our observation wins.)
 
 
 def _continuum_row(cont_csv: Path, src_id: int):
@@ -450,13 +545,13 @@ def collect():
         best = None
         best_key = (-1, np.inf)  # (n_detections [neg later], theta_au)
         for ad in adirs:
-            bid = brightest_source_id(ad / "continuum_sources.csv")
+            bid = preferred_source_id(ad / "continuum_sources.csv", name, src)
             if bid is None:
                 continue
             beam_arcsec = beam_for_proposal(ad)
             theta_au = beam_arcsec * dist * 1000.0 if beam_arcsec else np.inf
             # Skip proposals whose resolution doesn't meet the <500 AU bar.
-            if theta_au and np.isfinite(theta_au) and theta_au > 500.0:
+            if theta_au and np.isfinite(theta_au) and theta_au > 1200.0:
                 continue
             det = detections_at_brightest(ad, bid)
             n_det = 0
@@ -478,7 +573,7 @@ def collect():
                 if adirs:
                     name = alias  # use alias going forward
                     for ad in adirs:
-                        bid = brightest_source_id(ad / "continuum_sources.csv")
+                        bid = preferred_source_id(ad / "continuum_sources.csv", name, src)
                         if bid is None:
                             continue
                         beam_arcsec = beam_for_proposal(ad)
@@ -569,9 +664,9 @@ def collect():
             target=name,
             source=merged_src,
             theta_au=f"{theta_au:.0f}" if (theta_au and np.isfinite(theta_au)) else TODO,
-            sigma_native=f"{sigma_nat*1000.0:.1f}" if sigma_nat else TODO,
-            sigma_200au=f"{sigma_200*1000.0:.1f}" if sigma_200 else TODO,
-            sigma_200au_10kms=f"{sigma_200_10*1000.0:.2f}" if sigma_200_10 else TODO,
+            sigma_native=_fmtK(sigma_nat) if sigma_nat else TODO,
+            sigma_200au=_fmtK(sigma_200) if sigma_200 else TODO,
+            sigma_200au_10kms=_fmtK(sigma_200_10) if sigma_200_10 else TODO,
             f5sig=f5_str,
             d=f"{dist:.2f}",
             rrl=rrl, nacl=nacl, kcl=kcl, h2o=h2o, com=com,
@@ -593,7 +688,7 @@ def _classify_footnote(row, lit_refs):
     tgt = row["target"]
     lit_kinds = row.get("lit_kinds", {}) or {}
     has_lit_det = any(v in ("det", "tent") for v in lit_kinds.values())
-    pipeline_det = any(row.get(k) == "y" for k in ("nacl", "kcl", "h2o", "com"))
+    pipeline_det = any(row.get(k) == "y" for k in ("rrl", "nacl", "kcl", "h2o", "com"))
     if has_lit_det:
         return ("lit", lit_refs.get(tgt, {}).get("ref", ""))
     if pipeline_det:
@@ -613,6 +708,11 @@ def _merge_cell(species_key, mine, lit_kinds):
     if lit_kind == "tent":
         return r"y?$^L$"
     if lit_kind == "na":
+        # Lit reports NO spectral coverage — but OUR ALMA data may cover the
+        # species and produced 'n' (covered non-detection) or a value. Trust
+        # our result rather than smearing the pipeline output back to \nodata.
+        if mine in ("n", "y"):
+            return mine
         return r"\nodata"
     # default ('ul' or absent) -> show pipeline value
     return mine
@@ -628,7 +728,9 @@ def write_tex(df: pd.DataFrame):
     out.append(r"\begin{deluxetable}{lccccccccccc}")
     out.append(r"\tabletypesize{\scriptsize}")
     out.append(r"\tablecaption{Observation summary and detection inventory across the "
-               r"full target sample. Beam in AU at the source distance, $\sigma$ in mK. "
+               r"full target sample. Beam in AU at the source distance; $\sigma$ is "
+               r"per-channel brightness-temperature noise in K (converted from the "
+               r"cube-native Jy\,beam$^{-1}$ scale with each cube's synthesized beam). "
                r"Detection columns: y = $\geq 5\sigma$ in our pipeline; "
                r"y$^L$ = literature detection (no pipeline coverage / below "
                r"$5\sigma$ here); n = non-detection; "
@@ -648,7 +750,7 @@ def write_tex(df: pd.DataFrame):
                r"\colhead{$d$} & "
                r"\colhead{RRL} & \colhead{NaCl} & \colhead{KCl} & "
                r"\colhead{H$_2$O} & \colhead{COM} \\")
-    out.append(r" & (AU) & (mK) & (mK) & (mK) & & (kpc) & & & & 232 & }")
+    out.append(r" & (AU) & (K) & (K) & (K) & & (kpc) & & & & 232 & }")
     out.append(r"\startdata")
     for _, r in df.iterrows():
         kind, ref = _classify_footnote(r, lit_refs)
@@ -663,6 +765,7 @@ def write_tex(df: pd.DataFrame):
             star_used = True
         src_disp = _latex_escape(str(r["source"])) + mark
         lit_k = r.get("lit_kinds", {}) or {}
+        rrl_cell = _merge_cell("RRL",  r["rrl"],  lit_k)
         nacl = _merge_cell("NaCl", r["nacl"], lit_k)
         kcl  = _merge_cell("KCl",  r["kcl"],  lit_k)
         h2o  = _merge_cell("H2O",  r["h2o"],  lit_k)
@@ -672,7 +775,7 @@ def write_tex(df: pd.DataFrame):
             f"{r['theta_au']} & {r['sigma_native']} & "
             f"{r['sigma_200au']} & {r['sigma_200au_10kms']} & "
             f"{r['f5sig']} & {r['d']} & "
-            f"{r['rrl']} & {nacl} & {kcl} & {h2o} & {com} \\\\"
+            f"{rrl_cell} & {nacl} & {kcl} & {h2o} & {com} \\\\"
         )
     out.append(r"\enddata")
     out.append(r"\tablecomments{$\sigma_\mathrm{nat}$ is the per-channel noise at the "
@@ -683,7 +786,11 @@ def write_tex(df: pd.DataFrame):
                r"otherwise the native value is reported. $\sigma_{200,10}$ is the same "
                r"after smoothing to a $10$\,\kms\ channel. $f({>}5\sigma)$ is the "
                r"fraction of channels above five times the field's robust noise; a high "
-               r"value indicates line confusion.}")
+               r"value indicates line confusion. Rows with $\theta_\mathrm{maj} > 500$\,AU "
+               r"(DR21(OH) A/B, G268.42$-$0.85, G345.00$+$1.82) are the only targets for "
+               r"which the best available ALMA proposal does not reach sub-500\,AU beam; "
+               r"the salt/H$_2$O upper limits at those sources should be interpreted at "
+               r"the coarser resolution given in the table.}")
     # Footnote entries: literature references and the * (new detection) tag.
     for tgt, letter in sorted(fn_letter.items(), key=lambda kv: kv[1]):
         ref = _latex_escape(lit_refs.get(tgt, {}).get("ref", ""))

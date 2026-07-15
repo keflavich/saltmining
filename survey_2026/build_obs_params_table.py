@@ -59,7 +59,23 @@ def field_label(name, alt):
     return name
 
 
-def brightest_source_row(proposal_dir):
+_SRC_DF = None
+
+
+def _sources_df():
+    global _SRC_DF
+    if _SRC_DF is None:
+        _SRC_DF = pd.read_csv(SRC_CSV)
+    return _SRC_DF
+
+
+def brightest_source_row(proposal_dir, target_name=None):
+    """Row from continuum_sources.csv for the preferred source.
+
+    If target_name is passed, use the same on-target position match as
+    build_data_summary.preferred_source_id (within 1.5"); otherwise fall
+    back to the brightest continuum source in the field.
+    """
     cont = proposal_dir / "continuum_sources.csv"
     if not cont.exists() or cont.stat().st_size == 0:
         return None
@@ -69,6 +85,13 @@ def brightest_source_row(proposal_dir):
         return None
     if df.empty or "peak_Jybeam" not in df.columns:
         return None
+    if target_name is not None:
+        from build_data_summary import preferred_source_id
+        bid = preferred_source_id(cont, target_name, _sources_df())
+        if bid is not None:
+            hit = df[df["id"] == bid]
+            if not hit.empty:
+                return hit.iloc[0]
     idx = df["peak_Jybeam"].idxmax()
     return df.loc[idx]
 
@@ -99,28 +122,35 @@ def beam_arcsec_from_first_cube(proposal_dir):
 
 
 def best_proposal(name, dist):
-    """Return (proposal_dir, brightest_id, beam_arcsec) for the proposal with
-    the most lines detected at its own brightest source (tiebreak: smallest
-    beam). Mirrors build_data_summary."""
+    """Pick the same (proposal_dir, brightest_id, beam_arcsec) that T4
+    (build_data_summary) picks: number of detections weighted by
+    rrl/nacl/kcl/h2o/com groups (via detections_at_brightest), then
+    smallest theta_au. Ensures T4/T5 always describe the same proposal."""
     adirs = sorted((ANALYSIS / name).glob("2*")) if (ANALYSIS / name).is_dir() else []
     if not adirs:
+        # Try common name aliases (Orion-SrcI ↔ Orion_SrcI, etc.)
+        for alias in (name.replace("-", "_"), name.replace("_", "-")):
+            if alias == name:
+                continue
+            if (ANALYSIS / alias).is_dir():
+                adirs = sorted((ANALYSIS / alias).glob("2*"))
+                name = alias
+                break
+    if not adirs:
         return None
+    # Import T4's detection logic to keep the two tables in sync.
+    from build_data_summary import detections_at_brightest as _det4
     best = None
     best_key = (-1, np.inf)
     for ad in adirs:
-        row = brightest_source_row(ad)
+        row = brightest_source_row(ad, target_name=name)
         if row is None:
             continue
         bid = int(row["id"])
-        meas = ad / "line_measurements.csv"
+        det = _det4(ad, bid)
         n_det = 0
-        if meas.exists():
-            try:
-                m = pd.read_csv(meas)
-                if not m.empty and "snr" in m.columns:
-                    n_det = int(((m["source"] == bid) & (m["snr"] >= 5.0)).sum())
-            except pd.errors.EmptyDataError:
-                pass
+        if det is not None:
+            n_det = sum(int(det[k]) for k in ("rrl", "nacl", "kcl", "h2o", "com"))
         beam = beam_arcsec_from_first_cube(ad)
         theta_au = beam * dist * 1000.0 if beam else np.inf
         key = (n_det, -theta_au)
@@ -310,6 +340,11 @@ def collect():
             continue
         if meas.empty or not {"source", "snr", "line", "peak_v"} <= set(meas.columns):
             continue
+        # spec measurements are in cube native units (Jy/beam for archive
+        # products); convert brightness columns to true K
+        from kelvin import convert_measurements_to_K
+        meas = convert_measurements_to_K(meas, ROOT / "uvdata", ad.name,
+                                          ad.parent.name)
         ra_str, dec_str = deg_to_alma_str(float(srow["ra_deg"]), float(srow["dec_deg"]))
         snr_cont = float(srow.get("snr", 0.0)) if "snr" in srow.index else 0.0
         sigpos = pos_uncert_arcsec(beam_arcsec, snr_cont)
@@ -335,6 +370,28 @@ def collect():
         h2o_peak, h2o_int, h2o_line, _, h2o_status, h2o_sig = line_value(meas, bid, H2O_RE, "")
         nacl_peak, nacl_int, nacl_line, _, nacl_status, nacl_sig = line_value(meas, bid, NACL_RE, "")
         kcl_peak, kcl_int, kcl_line, _, kcl_status, kcl_sig = line_value(meas, bid, KCL_RE, "")
+        # Apply strict-vet gating: demote a "detected" salt-class line to
+        # "covered" (upper limit) when the vet flags the transition as
+        # SUSPECT/REJECT. Keeps T5 consistent with T4's Table-4 cells.
+        try:
+            from build_data_summary import _strict_vet_pass
+            for _species, _line, _peak, _stat in (("H2O", h2o_line, h2o_peak, h2o_status),
+                                                    ("NaCl", nacl_line, nacl_peak, nacl_status),
+                                                    ("KCl", kcl_line, kcl_peak, kcl_status),
+                                                    ("RRL", rrl_line, rrl_peak, rrl_status)):
+                if _stat == "detected":
+                    verdict = _strict_vet_pass(name, ad.name, int(bid), _species)
+                    if verdict in ("SUSPECT", "REJECT"):
+                        if _species == "H2O":
+                            h2o_status = "covered"; h2o_peak = None
+                        elif _species == "NaCl":
+                            nacl_status = "covered"; nacl_peak = None
+                        elif _species == "KCl":
+                            kcl_status = "covered"; kcl_peak = None
+                        elif _species == "RRL":
+                            rrl_status = "covered"; rrl_peak = None
+        except (ImportError, AttributeError):
+            pass
         rows.append(dict(
             name=name,
             field=field_label(name, r.get("alma_target_names", "")),
@@ -363,19 +420,27 @@ def collect():
     return pd.DataFrame(rows)
 
 
+def _fmt_K(val_K):
+    """Adaptive K formatting: >=10 K -> 0 dp, >=1 K -> 1 dp, else 2 dp."""
+    if abs(val_K) >= 10:
+        return f"{val_K:.0f}"
+    if abs(val_K) >= 1:
+        return f"{val_K:.1f}"
+    return f"{val_K:.2f}"
+
+
 def fmt_cell(peak, integ, status, lit_kind=None, lit_letter=None, sigma_K=None):
-    """One cell. Detection: peak in mK. Covered non-detection: explicit 3σ
-    upper limit `<N` in mK. No coverage: \\nodata. Literature-detected
+    """One cell. Detection: peak T_B in K. Covered non-detection: explicit
+    3σ upper limit `<N` in K. No coverage: \\nodata. Literature-detected
     cells with no re-measurement are decorated with the lit footnote.
     """
     if status == "detected":
         if peak is None or not np.isfinite(peak):
             return r"\nodata"
-        return f"{peak*1000:.1f}"
+        return _fmt_K(peak)
     if status == "covered":
         if sigma_K is not None and np.isfinite(sigma_K):
-            ul_mK = 3.0 * sigma_K * 1000.0
-            base = f"$<{ul_mK:.1f}$"
+            base = f"$<{_fmt_K(3.0 * sigma_K)}$"
         else:
             base = r"$<\!3\sigma$"
     else:
@@ -425,10 +490,12 @@ def write_tex(df):
                r"$v_\mathrm{LSR}$ is the peak velocity of the highest-SNR line "
                r"detected at the brightest source (Ref.\ line column); for "
                r"non-detections the literature value is reported (Ref.\ "
-               r"line = `lit: \dots'). Detection cells give peak brightness "
-               r"(mK) of the highest-SNR line in the species class. "
+               r"line = `lit: \dots'). Detection cells give the peak "
+               r"brightness temperature (K, converted from the cube-native "
+               r"Jy\,beam$^{-1}$ scale using each cube's synthesized beam) "
+               r"of the highest-SNR line in the species class. "
                r"`$<\!N$' in a covered cell is the $3\sigma$ upper limit "
-               r"in mK at the brightest source's peak pixel; "
+               r"in K at the brightest source's peak pixel; "
                r"\nodata\ marks no spectral coverage of the species. "
                r"Species-cell footnote markers cite literature detections "
                r"for which we do not have a re-measured value here.\label{tab:obspars}}")
@@ -439,7 +506,7 @@ def write_tex(df):
                r"\colhead{RRL} & \colhead{H$_2$O\,232} & "
                r"\colhead{NaCl} & \colhead{KCl} \\")
     out.append(r" & (J2000) & (J2000) & ($''$) & (\kms) & & "
-               r"(mK) & (mK) & (mK) & (mK) }")
+               r"(K) & (K) & (K) & (K) }")
     out.append(r"\startdata")
     for _, r in df.iterrows():
         field = str(r["field"]).replace("_", r"\_")

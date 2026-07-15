@@ -33,17 +33,17 @@ NEW_DETECTION_TARGETS = [
     # detection. IRAS 18174-1612 demoted to non-detection by strict-vet.
     # IRAS 17233-3606 NaCl + H2O are in Ginsburg+2023 (G351.77 mm1) - not new.
     ("IRAS 15412-5359",  "G326.6618+00.5207"),  # H2O REAL; NaCl SUSPECT (demoted)
-    ("I17016-4124",      "G345.5043+00.3480"),  # H2O REAL; NaCl SUSPECT (demoted)
+    ("I17008-4040",      "G345.5043+00.3480"),  # H2O REAL; NaCl SUSPECT (demoted)
 ]
 
 # Per source, choose up to 4 mom0 maps to render. Priority order.
 LINE_PRIORITIES = [
     ("NaCl", r"NaCl"),
     ("KCl",  r"KCl"),
-    ("H2O 232", r"H2O.*232"),
+    ("H2O 232", r"H2O_5_15-4_22_232"),
+    ("H2O v=2", r"H2O_v2"),
     ("SiS",  r"SiS"),
     ("SO",   r"SO_"),
-    ("H2O", r"H2O_"),
 ]
 
 
@@ -245,10 +245,12 @@ def build_figure(display, target):
         return None
     vetted = _vetted_lines(target)
     panels = []
+    seen_paths = set()
     for label, pat in LINE_PRIORITIES:
         m = find_mom0(pd_, bid, label, pat, vetted=vetted)
-        if m is not None:
+        if m is not None and str(m) not in seen_paths:
             panels.append((label, m))
+            seen_paths.add(str(m))
         if len(panels) == 4:
             break
     if not panels:

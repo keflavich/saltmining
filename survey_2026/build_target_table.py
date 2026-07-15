@@ -196,7 +196,9 @@ COMMON_NAME = {
     "G345.0061+01.7944C": "G345.01 C",
     "G345.0052+01.8209":  "G345.00+1.82",
     "G345.4938+01.4677":  "IRAS 16562-3959",
-    "G345.5043+00.3480":  "I17016-4124",
+    # NB: 17:04:22.9 -40:44:22 is IRAS 17008-4040 (the earlier I17016-4124
+    # label was a misassociation; 17016-4124 is at 17:05 -41:29)
+    "G345.5043+00.3480":  "I17008-4040",
     "I16547-4247":        "I16547-4247",
 }
 
@@ -269,6 +271,28 @@ def load_vlsr_sources():
             out[k] = dict(v_kms=v, method="rms",
                            ref=r"\citet{Lumsden2013}", tracers=None)
     return out
+
+
+def rms_class(rms_type):
+    """Collapse the RMS/HiGAL classification to the binary HII vs MYSO used
+    in the table. HII regions are ionized by an already-formed (often exposed)
+    star; MYSO = young stellar object that may host a disk."""
+    t = str(rms_type).strip().lower()
+    if t in ("hii", "hii region", "diffuse hii"):
+        return "HII"
+    # YSO, HII/YSO, Young/old star, Fevol=2 -> MYSO (hosts / may host a disk)
+    return "MYSO"
+
+
+# Regions where our analysis finds NO plausible (massive) disk candidate: the
+# luminosity is dominated by an already-formed, often exposed star. Kept in the
+# target list for completeness but excluded from the salt-disk sample/statistics.
+# name -> exposed ionizing star (with reference).
+NODISK_NOTE = {
+    "OrionB-Flame": r"No massive disk is present; the luminosity comes from "
+                    r"the known exposed early-B ionizing star IRS\,2b "
+                    r"\citep{Bik2003}. Excluded from the salt-disk sample.",
+}
 
 
 def main():
@@ -351,9 +375,17 @@ def main():
         dref_n = citet_to_num(dref)
         lref_n = citet_to_num(lref)
         vref_n = citet_to_num(vref)
+        # Source class (HII vs MYSO) + no-disk footnote where applicable
+        cls = rms_class(getattr(r, "type", ""))
+        cls_cell = cls
+        if r.name in NODISK_NOTE:
+            tag = chr(ord('a') + len(footnotes))
+            footnotes[tag] = citet_to_num(NODISK_NOTE[r.name])
+            cls_cell = rf"{cls}\tablenotemark{{{tag}}}"
         rows.append(dict(
             name=r.name.replace("_", r"\_"),
             common=common.replace("_", r"\_"),
+            cls=cls_cell,
             gname=gname,
             coord=coord,
             d=r.dist_kpc, d_str=d_str, lbol=r.lbol_lsun,
@@ -373,23 +405,24 @@ def main():
     # Compact portrait version of the targets table. Common name + Galactic
     # coord drive identification; J2000 RA/Dec are space-stripped to fit.
     lines.append(r"\startlongtable")
-    lines.append(r"\begin{deluxetable}{lllcccccc}")
+    lines.append(r"\begin{deluxetable}{llllcccccc}")
     lines.append(r"\tabletypesize{\scriptsize}")
     lines.append(r"\tablecaption{Target source list. ALMA project codes are listed when "
                  r"the corresponding observations achieved a spatial resolution finer than "
-                 r"500\,AU at the source distance.\label{tab:targets}}")
+                 r"500\,AU at the source distance. The class column gives the RMS/HiGAL "
+                 r"classification collapsed to H\,{\sc ii} region vs.\ MYSO.\label{tab:targets}}")
     lines.append(r"\tablehead{")
-    lines.append(r"\colhead{Source} & \colhead{Galactic} & "
+    lines.append(r"\colhead{Source} & \colhead{Class} & \colhead{Galactic} & "
                  r"\colhead{R.A.\,Dec.} & "
                  r"\colhead{$d$} & \colhead{$d^{*}$} & "
                  r"\colhead{$L_\mathrm{bol}$} & \colhead{$L^{*}$} & "
                  r"\colhead{$v_\mathrm{LSR}$} & \colhead{$v^{*}$} \\")
-    lines.append(r"& (l\,b) & (J2000) & (kpc) & ref. & "
+    lines.append(r"& & (l\,b) & (J2000) & (kpc) & ref. & "
                  r"($10^4\,L_\odot$) & ref. & (km\,s$^{-1}$) & ref.}")
     lines.append(r"\startdata")
     for r in rows:
         lines.append(
-            f"{r['common']} & {r['gname']} & \\texttt{{{r['coord']}}} & "
+            f"{r['common']} & {r['cls']} & {r['gname']} & \\texttt{{{r['coord']}}} & "
             f"{r['d_str']} & {r['dref']} & "
             f"{r['lbol']/1e4:.2f} & {r['lref']} & "
             f"{r['v_lsr']} & {r['vref']} \\\\"

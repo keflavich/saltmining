@@ -22,6 +22,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from kelvin import conversion_factor, fmt_K
+
 ROOT = Path("/orange/adamginsburg/salt/survey_2026")
 ANALYSIS = ROOT / "analysis_products"
 OUT_CSV = ROOT / "data/upper_limits_per_program.csv"
@@ -42,13 +44,15 @@ def brightest_source_id(cont_csv: Path) -> int | None:
     return int(df.loc[df["peak_Jybeam"].idxmax(), "id"])
 
 
-def measure_spec(npz_path: Path) -> dict | None:
+def measure_spec(npz_path: Path, conv_K: float = 1.0) -> dict | None:
     d = np.load(npz_path)
     if not {"vaxis", "spec", "sigma"} <= set(d.files):
         return None
     v = np.asarray(d["vaxis"], dtype=float)
     s = np.asarray(d["spec"], dtype=float)
-    sigma_native = float(d["sigma"])
+    # spec.npz values are cube-native (Jy/beam for archive products)
+    sigma_native = float(d["sigma"]) * conv_K
+    s = s * conv_K
     if v.size < 2 or not np.isfinite(sigma_native):
         return None
     dv = float(np.median(np.abs(np.diff(v))))
@@ -59,8 +63,8 @@ def measure_spec(npz_path: Path) -> dict | None:
     return dict(
         dv_kms=dv,
         sigma_native_K=sigma_native,
-        UL3_native_mK=3000.0 * sigma_native,
-        UL3_10kms_mK=3000.0 * sigma_10,
+        UL3_native_K=3.0 * sigma_native,
+        UL3_10kms_K=3.0 * sigma_10,
         peak_K=float(np.nanmax(s)) if s.size else np.nan,
     )
 
@@ -79,18 +83,26 @@ def collect():
             continue
         meas_csv = proposal_dir / "line_measurements.csv"
         detected = set()
+        line_conv = {}
         if meas_csv.exists():
             mdf = pd.read_csv(meas_csv)
             if "snr" in mdf.columns:
                 hit = mdf[(mdf["source"] == bid) & (mdf["snr"] >= 5.0)]
                 detected = set(hit["line"].astype(str))
+            if {"line", "cube", "rest_GHz"} <= set(mdf.columns):
+                for _, mr in mdf.drop_duplicates("line").iterrows():
+                    cube = mr.get("cube")
+                    if isinstance(cube, str) and cube:
+                        cube_full = ROOT / "uvdata" / proposal / target / cube
+                        line_conv[str(mr["line"])] = conversion_factor(
+                            str(cube_full), float(mr.get("rest_GHz", np.nan)))
         for npz in sorted(src_dir.glob("*.spec.npz")):
             line = npz.name.replace(".spec.npz", "")
             if not line.startswith(KEEP_PREFIXES):
                 continue
             if line in detected:
                 continue
-            m = measure_spec(npz)
+            m = measure_spec(npz, conv_K=line_conv.get(line, np.nan))
             if m is None:
                 continue
             rows.append({
@@ -122,7 +134,7 @@ def write_tex(df: pd.DataFrame):
                  r"\colhead{$\Delta v_\mathrm{chan}$} & "
                  r"\colhead{$3\sigma$ (native)} & "
                  r"\colhead{$3\sigma$ ($10$\,\kms)} \\")
-    lines.append(r"& & & & (\kms) & (mK) & (mK) }")
+    lines.append(r"& & & & (\kms) & (K) & (K) }")
     lines.append(r"\startdata")
     try:
         import build_nacl_rrl_table as v1
@@ -134,8 +146,8 @@ def write_tex(df: pd.DataFrame):
         lines.append(
             f"{target_esc} & {r['proposal']} & "
             f"{fmt_line(r['line'])} & {int(r['brightest_source_id'])} & "
-            f"{r['dv_kms']:.2f} & {r['UL3_native_mK']:.1f} & "
-            f"{r['UL3_10kms_mK']:.1f} \\\\"
+            f"{r['dv_kms']:.2f} & {fmt_K(r['UL3_native_K'])} & "
+            f"{fmt_K(r['UL3_10kms_K'])} \\\\"
         )
     lines.append(r"\enddata")
     lines.append(r"\tablecomments{The brightest mm continuum source within "

@@ -243,7 +243,14 @@ def main():
         target = v1._display_name(raw_target) if v1 else raw_target
         first_row = (target != last_target)
         last_target = target
-        line_tex = (str(r["line"]).replace("_", r"\_"))
+        # The 232.6867 GHz water line is the vibrationally-excited
+        # v2=1 5(5,0)-6(4,3) transition (Eu=3462 K), not the ground state;
+        # "H2O_5_15-4_22_232" is a legacy identifier. Display it correctly.
+        _line = str(r["line"])
+        if _line == "H2O_5_15-4_22_232":
+            line_tex = r"H$_2$O $v_2${=}1 5(5,0)-6(4,3)"
+        else:
+            line_tex = _line.replace("_", r"\_")
         contam = str(r.get("contaminant", "") or "")
         contam_tex = contam.replace("_", r"\_") if contam else r"\nodata"
         flags = []
@@ -267,6 +274,21 @@ def main():
             f"{T_str} & {contam_tex} & {flag_str} \\\\"
         )
     lines.append(r"\enddata")
+    lines.append(
+        r"\tablecomments{`Contam.'\ lists the strongest XCLASS hot-core "
+        r"contaminant transition within $\pm5$\,MHz of the observed line "
+        r"frequency (\nodata\ = no plausible contaminant found). "
+        r"Flag column: \textbf{prob} = passes all `probable' criteria in "
+        r"the caption; `blend' = a hot-core contaminant is predicted to be "
+        r"comparably bright ($T_B^{\rm cand} \geq 0.3\,T_B^{\rm obs}$), so "
+        r"the identification is unreliable; `vexc-only' = only a "
+        r"vibrationally excited (v\,$\geq$\,2) transition of the species "
+        r"exceeds $5\sigma$ while its ground-state (v=0) lines are covered "
+        r"but undetected --- physically implausible for thermal emission "
+        r"and therefore treated as a probable misidentification; "
+        r"`$\Delta v$=N' = the line peak is offset by N\,\kms\ from the "
+        r"source systemic velocity (offsets $>5$\,\kms\ suggest the "
+        r"feature belongs to a different species or velocity component).}")
     lines.append(r"\end{deluxetable}")
     OUT_TEX.write_text("\n".join(lines) + "\n")
     print(f"wrote {OUT_TEX}")

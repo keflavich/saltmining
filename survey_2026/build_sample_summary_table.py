@@ -67,6 +67,61 @@ def species_of(line, group=None):
     return None
 
 
+def load_vetted_kinds():
+    """Return dict target -> {species_key: kind} from the strict-vetted
+    per_target_paper.csv, so the summary counts firm detections the same way
+    the detections table classifies them (a pipeline 'tent' is NOT a firm
+    detection even if a single raw line exceeds 5 sigma)."""
+    csv = ROOT / "data/per_target_paper.csv"
+    if not csv.exists():
+        return {}
+    df = pd.read_csv(csv)
+    colmap = {"NaCl_kind": "nacl", "KCl_kind": "kcl", "H2O_kind": "h2o",
+              "RRL_kind": "rrl", "SiS_kind": "sis"}
+    out = {}
+    for _, r in df.iterrows():
+        name = str(r["target"])
+        rec = {}
+        for col, key in colmap.items():
+            if col in df.columns:
+                v = str(r.get(col, "") or "").strip().lower()
+                if v:
+                    rec[key] = v
+        for alias in (name, name.replace("_", "-"), name.replace("-", "_")):
+            out.setdefault(alias, rec)
+    return out
+
+
+_VETTED = None
+
+
+def apply_vetted(state, name):
+    """Make the summary numerator match the vetted detections table exactly:
+    the strict-vetted per_target_paper kind is authoritative. kind='det'
+    (which includes stacked-line detections that no single raw line reaches)
+    counts as a firm detection; 'tent'/'ul'/'na' do not. Species without a
+    vetted kind fall back to the raw per-line >=5 sigma result."""
+    global _VETTED
+    if _VETTED is None:
+        _VETTED = load_vetted_kinds()
+    rec = _VETTED.get(name) or _VETTED.get(name.replace("_", "-")) \
+        or _VETTED.get(name.replace("-", "_"))
+    if not rec:
+        return state
+    for sp, kind in rec.items():
+        if sp not in state:
+            continue
+        if kind == "det":
+            state[sp]["observed"] = True
+            state[sp]["detected"] = True
+        elif kind in ("tent", "ul"):
+            state[sp]["observed"] = True
+            state[sp]["detected"] = False
+        elif kind == "na":
+            state[sp]["detected"] = False
+    return state
+
+
 def load_lit():
     """Return dict target -> {species: 'det'|'tent'|'ul'|'na'}."""
     if not LIT_CSV.exists():
@@ -78,6 +133,9 @@ def load_lit():
         rec = {}
         for sp_csv, sp_key in [("NaCl", "nacl"), ("KCl", "kcl"),
                                 ("H2O", "h2o"), ("RRL", "rrl"),
+                                ("SiS", "sis"),   # was silently dropped:
+                                                   # lit SiS (e.g. SrcI) never
+                                                   # reached the summary
                                 ("SiO", None), ("SO", None), ("COM", "com")]:
             if sp_key is None:
                 continue
@@ -95,7 +153,12 @@ def detections_for_target(name):
 
     None if no pipeline analysis at all.
     """
-    adirs = sorted((ANALYSIS / name).glob("2*")) if (ANALYSIS / name).is_dir() else []
+    cands = [name, name.replace("-", "_"), name.replace("_", "-")]
+    adirs = []
+    for nm in cands:
+        if (ANALYSIS / nm).is_dir():
+            adirs = sorted((ANALYSIS / nm).glob("2*"))
+            break
     if not adirs:
         return None
     obs = {sp: False for sp in SPECIES}
@@ -128,6 +191,13 @@ def detections_for_target(name):
                 det[sp] = True
     if not seen_analysis:
         return None
+    # COMs: every Band 6/7 spectral window contains numerous COM lines, so
+    # every ANALYZED target has COM coverage regardless of whether one of
+    # the pipeline's few cataloged COM transitions happened to be recorded.
+    # (Previously the denominator counted only targets where a cataloged
+    # COM line landed in band — 6 targets — and every hot core detects
+    # CH3OH, producing a meaningless 100%.)
+    obs["com"] = True
     return {sp: dict(observed=obs[sp], detected=det[sp]) for sp in SPECIES}
 
 
@@ -185,6 +255,7 @@ def summarize(sample_df, label, lit):
                 d = {sp: dict(observed=False, detected=False) for sp in SPECIES}
             else:
                 continue
+        d = apply_vetted(d, r["name"])
         d = merge_lit(d, lit.get(r["name"]))
         analyzed += 1
         for sp in SPECIES:
@@ -271,7 +342,10 @@ def main():
                r"detection at the brightest mm continuum source or a "
                r"literature-confirmed detection. The denominator differs "
                r"between species because not every ALMA program covered "
-               r"every line.\label{tab:samplesummary}}")
+               r"every line; the exception is the COM column, whose "
+               r"denominator is the full analyzed sample because every "
+               r"Band 6/7 spectral setup covers numerous COM "
+               r"transitions.\label{tab:samplesummary}}")
     out.append(r"\tablehead{")
     out.append(r"\colhead{Sample} & \colhead{$N$} & "
                r"\colhead{$N_\mathrm{ALMA}$} & \colhead{Analyzed} & "

@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from kelvin import conversion_factor
+
 warnings.filterwarnings("ignore")
 
 ROOT = Path("/orange/adamginsburg/salt/survey_2026")
@@ -25,7 +27,38 @@ SRC_CSV = ROOT / "data/sources_L4_d2.csv"
 OUT_CSV = ROOT / "data/per_target_paper.csv"
 OUT_TEX = Path("/orange/adamginsburg/salt/demography_2026/per_target_paper.tex")
 
-SPECIES = ["NaCl", "KCl", "H2O", "RRL", "SiO", "SiS", "SO"]
+SPECIES = ["NaCl", "KCl", "H2O", "RRL", "SiO", "SiS", "SO", "AlO"]
+
+# obs_params.csv carries curated peak/UL brightness + status for these four
+# species (incl. literature-only sources like Orion-SrcI whose lines are not in
+# our re-imaged cubes); used to backfill cells the pipeline aggregate left 'na'.
+OBSPAR_SPECIES = {"NaCl": "nacl", "KCl": "kcl", "H2O": "h2o", "RRL": "rrl"}
+
+
+def obsparams_backfill():
+    """target -> {species: (kind, value_K)} from data/obs_params.csv."""
+    path = ROOT / "data/obs_params.csv"
+    if not path.exists():
+        return {}
+    op = pd.read_csv(path)
+    out = {}
+    for _, r in op.iterrows():
+        name = str(r.get("name", "")).strip()
+        if not name:
+            continue
+        d = {}
+        for sp, pfx in OBSPAR_SPECIES.items():
+            status = str(r.get(f"{pfx}_status", "")).strip().lower()
+            peak = pd.to_numeric(r.get(f"{pfx}_peak_K"), errors="coerce")
+            sig = pd.to_numeric(r.get(f"{pfx}_sig_K"), errors="coerce")
+            if status.startswith("detect") and np.isfinite(peak):
+                d[sp] = ("det", float(peak))
+            elif status and status not in ("na", "nan", "notcovered",
+                                            "not_covered") and np.isfinite(sig):
+                d[sp] = ("ul", 3.0 * float(sig))
+        if d:
+            out[name] = d
+    return out
 
 
 def brightest_source_id(cont_csv: Path):
@@ -83,12 +116,21 @@ def best_for_target(target_dir: Path):
             sn_native = float(d["sigma"])
             if v.size < 2 or not np.isfinite(sn_native):
                 sigma10.append(np.nan); peak_K.append(np.nan); continue
+            # spec.npz values are cube-native (Jy/beam for archive
+            # products); convert to true K via the row's cube header
+            cube = r.get("cube")
+            if isinstance(cube, str) and cube:
+                cube_full = ROOT / "uvdata" / prop_dir.name / target_dir.name / cube
+                conv = conversion_factor(str(cube_full), float(r.get("rest_GHz", np.nan)))
+            else:
+                conv = np.nan
             dv = float(np.median(np.abs(np.diff(v))))
-            sigma10.append(sigma_at_dv(sn_native, dv, 10.0))
-            peak_K.append(float(np.nanmax(s)))
+            sigma10.append(sigma_at_dv(sn_native * conv, dv, 10.0))
+            peak_K.append(float(np.nanmax(s)) * conv)
         df["sigma10_K"] = sigma10
         df["peak_K"] = peak_K
         df["program"] = prop_dir.name
+        df["src_id"] = bid
         rows.append(df)
     if not rows:
         return None
@@ -133,8 +175,32 @@ def stack_snr_for_species(target_dir: Path, sp: str):
         sigma = float(d["sigma"])
         if not np.isfinite(sigma) or sigma <= 0:
             continue
-        peak = float(np.nanmax(spec))
-        snr = peak / sigma
+        # Stack is in cube-native units (Jy/beam); approximate the K
+        # conversion with the median factor over this family's lines.
+        conv = np.nan
+        meas_csv = prop_dir / "line_measurements.csv"
+        if meas_csv.exists():
+            try:
+                mdf = pd.read_csv(meas_csv)
+            except pd.errors.EmptyDataError:
+                mdf = pd.DataFrame()
+            if not mdf.empty and {"group", "cube", "rest_GHz"} <= set(mdf.columns):
+                fam = mdf[mdf["group"] == sp].drop_duplicates("line")
+                convs = [conversion_factor(
+                            str(ROOT / "uvdata" / prop_dir.name /
+                                target_dir.name / str(mr["cube"])),
+                            float(mr["rest_GHz"]))
+                         for _, mr in fam.iterrows()
+                         if isinstance(mr.get("cube"), str)]
+                convs = [c for c in convs if np.isfinite(c)]
+                if convs:
+                    conv = float(np.median(convs))
+        peak = float(np.nanmax(spec)) * conv
+        sigma = sigma * conv
+        snr = (peak / sigma) if (np.isfinite(peak) and np.isfinite(sigma)
+                                  and sigma > 0) else np.nan
+        if not np.isfinite(snr):
+            continue
         if best is None or snr > best[0]:
             best = (snr, peak, sigma, prop_dir.name, int(d.get("n_lines", 0)))
     return best
@@ -155,17 +221,36 @@ def aggregate_species(df_all, target_dir: Path):
         if rows.empty:
             out[sp] = ("na", np.nan, None, "")
             continue
+        rejected = False
         det_rows = rows[rows["snr"] >= 5.0]
         if not det_rows.empty:
             top = det_rows.loc[det_rows["snr"].idxmax()]
-            out[sp] = ("det", float(top["peak_K"]), str(top["program"]), "line")
-            continue
+            # strict-vet gating (incl. manual expert overrides):
+            # REAL -> det, SUSPECT -> tent, REJECT -> fall through to UL
+            verdict = None
+            try:
+                from build_data_summary import _strict_vet_pass
+                verdict = _strict_vet_pass(target_dir.name,
+                                            str(top["program"]),
+                                            int(top.get("src_id", -1)), sp)
+            except ImportError:
+                verdict = None
+            if verdict == "REJECT":
+                rejected = True  # demoted: skip stack, go to UL below
+            elif verdict == "SUSPECT":
+                out[sp] = ("tent", float(top["peak_K"]),
+                           str(top["program"]), "line (vet: suspect)")
+                continue
+            else:
+                out[sp] = ("det", float(top["peak_K"]),
+                           str(top["program"]), "line")
+                continue
         # No single-line detection; try the multi-line stack. Threshold 4
         # rather than 5: a stack of N>=2 independent lines effectively
         # multiplies the post-trials confidence; the disk velocity-spread
         # also dilutes peak SNR in each individual line. This recovers
         # MonR2-IRS3 NaCl (4 lines @ 4.8 sigma post-stack) as a detection.
-        stack = stack_snr_for_species(target_dir, sp)
+        stack = None if rejected else stack_snr_for_species(target_dir, sp)
         if stack is not None and stack[0] >= 4.0:
             snr, peak, sigma, prog, nl = stack
             out[sp] = ("det", peak, prog, f"stack n={nl} snr={snr:.1f}")
@@ -180,12 +265,14 @@ def aggregate_species(df_all, target_dir: Path):
 
 
 def fmt_cell(kind, val_K, flag_marker=""):
+    from kelvin import fmt_K
     if kind == "na":
         return r"\nodata"
-    mK = val_K * 1000.0
+    if val_K is None or not np.isfinite(val_K):
+        return r"\nodata"
     if kind == "det":
-        return f"{mK:.1f}{flag_marker}"
-    return rf"$<${mK:.1f}"
+        return f"{fmt_K(val_K)}{flag_marker}"
+    return rf"$<${fmt_K(val_K)}"
 
 
 # Map per-species warning categories to LaTeX superscripts on the cell
@@ -263,6 +350,42 @@ def main():
         })
     out = pd.DataFrame(out_rows)
 
+    # Backfill NaCl/KCl/H2O/RRL cells left 'na' with curated obs_params values
+    # (fills literature-only archetypes: Orion-SrcI water, NGC6334I, IRAS17233,
+    # and BN's RRL -- SrcI has no RRL so its RRL cell stays blank, and BN's
+    # RRL detection carries the column).
+    # Literature-only archetype cells absent from obs_params: Orion-SrcI's
+    # vibrationally-excited hot water (232.687 GHz v2=1 line, not covered by our
+    # re-imaged cubes) is the reference "whopping" water detection
+    # \citep{Hirota2016}.
+    LIT_OVERRIDE = {("Orion-SrcI", "H2O"): ("det", 1500.0)}
+
+    def _norm(n):
+        return str(n).replace("_", "-")
+
+    obp = obsparams_backfill()
+    for i, tgt in enumerate(out["target"]):
+        for (lt, lsp), (lk, lv) in LIT_OVERRIDE.items():
+            if _norm(tgt) == _norm(lt) and f"{lsp}_kind" in out.columns:
+                # fill when unclassified OR when a detection has no value yet
+                if (str(out.at[i, f"{lsp}_kind"]) in ("na", "nan", "", "None")
+                        or pd.isna(out.at[i, f"{lsp}_K"])):
+                    out.at[i, f"{lsp}_kind"] = lk
+                    out.at[i, f"{lsp}_K"] = lv
+                    if f"{lsp}_prog" in out.columns:
+                        out.at[i, f"{lsp}_prog"] = "literature"
+        vals = obp.get(str(tgt))
+        if not vals:
+            continue
+        for sp, (kind, valK) in vals.items():
+            kc, vc = f"{sp}_kind", f"{sp}_K"
+            cur = str(out.at[i, kc]) if kc in out.columns else "na"
+            if cur in ("na", "nan", "", "None") or pd.isna(out.at[i, vc]):
+                out.at[i, kc] = kind
+                out.at[i, vc] = valK
+                if f"{sp}_prog" in out.columns:
+                    out.at[i, f"{sp}_prog"] = "obs\\_params"
+
     # Merge evidence audit flags (one row per analyzed target/proposal).
     # We use the union of flags across proposals for each target.
     audit_csv = ROOT / "data/evidence_audit.csv"
@@ -291,12 +414,14 @@ def main():
         r"\tabletypesize{\scriptsize}",
         r"\tablecaption{Integrated per-target detection peaks and 3$\sigma$ upper limits "
         r"toward the brightest mm continuum source. Detection values are peak brightness "
-        r"temperatures (mK) of the highest-S/N line in each species class; non-detection "
-        r"values are 3$\sigma$ upper limits (mK) at a 10 km/s channel using the line with "
+        r"temperatures (K, converted from the cube-native Jy\,beam$^{-1}$ "
+        r"scale with each cube's synthesized beam) of the highest-S/N line "
+        r"in each species class; non-detection "
+        r"values are 3$\sigma$ upper limits (K) at a 10 km/s channel using the line with "
         r"the tightest native-resolution noise. \nodata\ = no line of that class recorded.\label{tab:per_target}}",
         r"\tablehead{",
         r"\colhead{Field} & " + " & ".join(rf"\colhead{{{sp}}}" for sp in SPECIES) + r" \\",
-        r" & " + " & ".join(["(mK)"] * len(SPECIES)) + r"}",
+        r" & " + " & ".join(["(K)"] * len(SPECIES)) + r"}",
         r"\startdata",
     ]
     try:

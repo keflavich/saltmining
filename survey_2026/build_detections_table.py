@@ -38,7 +38,7 @@ SPECIES_COLS = ["H2O", "NaCl", "KCl", "SiO", "RRL", "SiS", "SO"]
 # Override: literature COM and PN detections that the pipeline cannot
 # classify. Keyed by target (CSV name).
 MANUAL = {
-    "Orion-SrcI":         dict(disk="yes",  COM="yes",  PN="?"),
+    "Orion-SrcI":         dict(disk="yes",  COM="no",   PN="?"),
     "Orion-BN":           dict(disk="no",   COM=r"\nodata", PN=r"\nodata"),
     "NGC6334I":           dict(disk="yes-c", COM="yes",  PN="yes*"),
     "NGC6334IN":          dict(disk="no",   COM="yes",  PN="yes*"),
@@ -50,7 +50,7 @@ MANUAL = {
     "G019.6097-00.2342":  dict(disk="yes-c", COM="yes", PN="no*"),
     "G023.0099-00.4108":  dict(disk="no",   COM="yes",  PN="no*"),
     "G017.6396+00.1580":  dict(disk="yes",  COM="no",   PN="no"),
-    "G268.4222-00.8490":  dict(disk="?",    COM=r"\textsc{wip}", PN=r"\textsc{wip}"),
+    "G268.4222-00.8490":  dict(disk="?",    COM="no",   PN="?"),
     "G326.6618+00.5207":  dict(disk="yes",  COM="yes*", PN="?"),
     "G345.5043+00.3480":  dict(disk="yes",  COM="yes",  PN="?"),
     "G345.4938+01.4677":  dict(disk="no",   COM="ext",  PN="no"),
@@ -190,13 +190,25 @@ def main():
                           + [row_cells[k] for k in order]) + r" \\"
         out.append(line)
     out.append(r"\enddata")
-    out.append(r"\tablecomments{`disk' = morphological or kinematic evidence "
-               r"for a disk/continuum-source / unresolved (`yes-c'), `unres' "
-               r"= unresolved, `cont' = continuum-only, `ext' = extended. "
-               r"`yes' for any species means $\geq 5\sigma$ at the brightest "
-               r"mm continuum source in at least one analyzed ALMA program, "
-               r"OR a literature detection. Manual entries for `disk', "
-               r"COMs, and PN columns are maintained in "
+    out.append(r"\tablecomments{Cell values: `yes' = $\geq 5\sigma$ "
+               r"detection at the brightest mm continuum source in at "
+               r"least one analyzed ALMA program, or a literature-confirmed "
+               r"detection; `yes*' = tentative (marginal significance or "
+               r"unresolved identification concerns); `no' = covered but "
+               r"undetected ($\geq 5\sigma$ upper limit); `no*' = "
+               r"non-detection with a marginal sub-threshold feature noted "
+               r"in the cited reference; `?' = not yet classified; "
+               r"\nodata\ = species not covered by any analyzed spectral "
+               r"setup. The `disk' column summarizes the morphological or "
+               r"kinematic evidence for a disk at the brightest source: "
+               r"`yes' = resolved disk (velocity gradient and/or flattened "
+               r"morphology); `yes-c' = disk candidate (suggestive but not "
+               r"conclusive); `yes*' = tentative; `unres' = source "
+               r"unresolved, disk presence untestable at the available "
+               r"beam; `cont' = continuum detected but no kinematic "
+               r"information; `ext' = emission is extended/ambient rather "
+               r"than disk-like. Manual entries for the `disk', COMs, and "
+               r"PN columns are maintained in "
                r"build\_detections\_table.py until those modules can "
                r"auto-classify reliably.}")
     out.append(r"\end{deluxetable}")

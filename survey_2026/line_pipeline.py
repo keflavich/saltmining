@@ -72,8 +72,11 @@ def build_line_list(fmin=80.0, fmax=500.0):
     lines += load_salt_lines("KCl",  "/orange/adamginsburg/salt/salt_data/39K-35Cl_rotational_transitions.ipac",  fmin, fmax)
     # H2O
     lines += [
-        {"name":"H2O_5_15-4_22_232",      "rest_GHz":232.68670,"Eu_K":644,"group":"H2O"},
-        {"name":"H2O_v2_3_13-2_20_232",   "rest_GHz":232.93660,"Eu_K":2400,"group":"H2O"},
+        # 232.68670 = H2O v2=1 5(5,0)-6(4,3), Eu=3461.9 K (vibrationally
+        # excited = genuinely hot water). Name kept as a legacy identifier.
+        {"name":"H2O_5_15-4_22_232",      "rest_GHz":232.68670,"Eu_K":3462,"group":"H2O"},
+        # H2O_v2_3_13-2_20_232 (232.9366) dropped: always blended with the
+        # neighboring CH3OH line, so it never gives a clean H2O measurement.
         {"name":"H2O_5_24-4_31_321",      "rest_GHz":321.22568,"Eu_K":1862,"group":"H2O"},
     ]
     # SO / SO2 / SiO / SiS in 200-360 GHz commonly bright
@@ -104,12 +107,23 @@ def build_line_list(fmin=80.0, fmax=500.0):
     # Recomb
     R_INF_C = 3.289841960364e15
     ME_MP = 0.000544617
-    def rrl(n, dn): return R_INF_C * (1.0/n**2 - 1.0/(n+dn)**2) / (1.0 + ME_MP) * 1e-9
+    ME_MC = 4.5546e-5   # m_e / M(12C): carbon RRLs sit +149.4 km/s from H
+    def rrl(n, dn, me_mx=ME_MP):
+        return R_INF_C * (1.0/n**2 - 1.0/(n+dn)**2) / (1.0 + me_mx) * 1e-9
     for dn, sym in [(1, "alpha"), (2, "beta"), (3, "gamma"), (4, "delta")]:
         for n in range(20, 80):
             f = rrl(n, dn)
             if fmin <= f <= fmax:
                 lines.append({"name": f"H{n}{sym}", "rest_GHz": f, "Eu_K": 0, "group": "RRL"})
+    # Carbon RRLs (alpha only): dense-PDR / photoevaporating-surface tracer.
+    # Detected without H counterpart toward IRAS 17008-4040 mm1 (C30alpha
+    # 232.017 GHz); keep as a separate group so it isn't conflated with the
+    # ionized-gas (H) RRL statistics.
+    for n in range(25, 40):
+        f = rrl(n, 1, ME_MC)
+        if fmin <= f <= fmax:
+            lines.append({"name": f"C{n}alpha", "rest_GHz": f, "Eu_K": 0,
+                          "group": "CRRL"})
     return lines
 
 
@@ -171,6 +185,60 @@ def beam_pix(hdr):
 
 
 # ----- Source ID -----
+def _sources_from_region(reg_path, cont_data, cont_hdr, cont_sigma, wcs_cont):
+    """Parse a DS9 .reg with circle/ellipse entries (icrs) and return a list
+    of source dicts compatible with process_source(). Dedupe identical
+    centers (≤0.05" apart). Each source gets peak_Jybeam = continuum value
+    at its center pixel.
+
+    Regions emitting `ellipse(ra, dec, a", b", pa)` and `circle(ra, dec, r")`
+    are accepted. The aperture's semi-major axis is stored as
+    ``aper_arcsec`` for later use when ``--use-region-aperture`` is set.
+    """
+    import re
+    ny, nx = cont_data.shape
+    out = []
+    seen = []
+    raw = Path(reg_path).read_text()
+    for ln in raw.splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or ln in ("icrs", "fk5"):
+            continue
+        m_e = re.match(r"ellipse\(([\-0-9.]+),\s*([\-0-9.]+),\s*([\d.]+)\"?,\s*([\d.]+)\"?,\s*([\-0-9.]+)\)", ln)
+        m_c = re.match(r"circle\(([\-0-9.]+),\s*([\-0-9.]+),\s*([\d.]+)\"?\)", ln)
+        if m_e:
+            ra, dec, a, b, pa = (float(m_e.group(i)) for i in range(1, 6))
+            aper = max(a, b)
+            text_match = re.search(r"text=\{([^}]+)\}", ln)
+            label = text_match.group(1) if text_match else ""
+        elif m_c:
+            ra, dec, r = (float(m_c.group(i)) for i in range(1, 4))
+            aper = r
+            label = ""
+        else:
+            continue
+        # Dedupe centers within 0.05"
+        dup = False
+        for ra0, dec0 in seen:
+            if abs(ra - ra0) * 3600 * np.cos(np.radians(dec)) < 0.05 and abs(dec - dec0) * 3600 < 0.05:
+                dup = True; break
+        if dup:
+            continue
+        seen.append((ra, dec))
+        # Pixel coords in continuum image
+        xp, yp = wcs_cont.world_to_pixel(SkyCoord(ra * u.deg, dec * u.deg))
+        xi, yi = int(round(float(xp))), int(round(float(yp)))
+        if not (0 <= xi < nx and 0 <= yi < ny):
+            print(f"  region ({ra},{dec}) outside continuum image; skip")
+            continue
+        peak = float(cont_data[yi, xi])
+        out.append(dict(id=len(out) + 1, ra_deg=ra, dec_deg=dec,
+                        x=xi, y=yi, peak_Jybeam=peak,
+                        snr=peak / cont_sigma if cont_sigma > 0 else 0.0,
+                        aper_arcsec=aper, label=label))
+    return out
+
+
 def find_continuum_sources(cont_path, peak_sigma=PEAK_SIGMA, min_peaks=1):
     hdu = fits.open(cont_path)[0]
     data = np.squeeze(hdu.data).astype(np.float32)
@@ -206,7 +274,7 @@ def cutout_cube(cube_path, line, ra, dec, vlsr_kms, half_arcsec=2.5):
         return None
     rest = line["rest_GHz"] * u.GHz
     # RRLs are broad; need wider spectral window for noise + line capture
-    vwin = 150.0 if line.get("group") == "RRL" else VWIN_KMS
+    vwin = 150.0 if line.get("group") in ("RRL", "CRRL") else VWIN_KMS
     try:
         c = cube.with_spectral_unit(u.km/u.s, velocity_convention="radio", rest_value=rest)
         sub = c.spectral_slab((vlsr_kms - vwin)*u.km/u.s, (vlsr_kms + vwin)*u.km/u.s)
@@ -243,7 +311,7 @@ def measure_line(cutout, src_pixel_yx, beam_pix_count, vlsr_kms, group="other",
     spec = np.nanmean(data[:, aper], axis=1)
     # Group-aware windows (off_kms scales with on_kms so the off-line baseline
     # is always 2x the on-line half-window)
-    if group == "RRL":
+    if group in ("RRL", "CRRL"):
         on_kms, off_kms = 60.0, 100.0
     else:
         on_kms = on_kms_default
@@ -308,8 +376,22 @@ def plot_continuum_overview(cont_data, cont_hdr, sigma, sources, out_path):
     plt.close(fig)
 
 
+def _max_grad_pa_pix(mom1_arr, sy, sx, half=8):
+    """Estimate PA (deg, E of N) of max mom1 gradient at (sy, sx)."""
+    y0 = max(0, sy - half); y1 = min(mom1_arr.shape[0], sy + half + 1)
+    x0 = max(0, sx - half); x1 = min(mom1_arr.shape[1], sx + half + 1)
+    sub = mom1_arr[y0:y1, x0:x1]
+    if not np.isfinite(sub).any():
+        return 0.0
+    gy, gx = np.gradient(sub)
+    cy, cx = sy - y0, sx - x0
+    cy = min(cy, gy.shape[0] - 1); cx = min(cx, gx.shape[1] - 1)
+    pa = np.degrees(np.arctan2(gx[cy, cx], gy[cy, cx]))
+    return float(pa) if np.isfinite(pa) else 0.0
+
+
 def plot_line_diagnostic(measure, line, sid, sdir, vlsr_kms, cutout):
-    """5-panel: peak channel | mom0 | masked mom1 | spectrum (w/ integ bounds) | info"""
+    """6-panel: peak | mom0 | mom1+slit | spectrum (w/ contaminants) | PV | info."""
     m = measure
     cube_arr = m["raw_data"]
     v = m["vaxis"]
@@ -330,9 +412,43 @@ def plot_line_diagnostic(measure, line, sid, sdir, vlsr_kms, cutout):
         mom1[mom0 < 5*sig_m0] = np.nan
     else:
         mom1 = np.full_like(mom0, np.nan, dtype=np.float32)
-    fig, axs = plt.subplots(1, 5, figsize=(20, 4))
-    # 3x crop on the image panels (panels 0, 1, 2)
-    ZOOM = 3.0
+    fig, axs = plt.subplots(1, 6, figsize=(24, 4))
+    # Compute slit PA from mom1 at source center (cutout-center).
+    ny0, nx0 = mom0.shape
+    src_yc, src_xc = ny0 // 2, nx0 // 2
+    # Crop to the detected signal +-5 px, but never wider than +-3
+    # synthesized beams around the SOURCE center (extended contaminants
+    # were blowing up signal-based crops and hiding the compact target).
+    beam_fwhm_pix = float(np.sqrt(m.get("beam_pix", 25.0) * 4 * np.log(2) / np.pi))
+    cap = max(8, int(round(3.0 * beam_fwhm_pix)))
+    sig_m0_b = mad_std(mom0, ignore_nan=True) if np.isfinite(mom0).any() else 1.0
+    sig_mask = (mom0 > 3.0 * sig_m0_b) & np.isfinite(mom0)
+    # only signal within the 3-beam cap participates in the tight crop
+    capmask = np.zeros_like(sig_mask)
+    capmask[max(0, src_yc - cap):src_yc + cap + 1,
+            max(0, src_xc - cap):src_xc + cap + 1] = True
+    sig_mask &= capmask
+    if sig_mask.sum() >= 3:
+        ys_s, xs_s = np.where(sig_mask)
+        ymin = max(0, ys_s.min() - 5); ymax = min(ny0, ys_s.max() + 6)
+        xmin = max(0, xs_s.min() - 5); xmax = min(nx0, xs_s.max() + 6)
+    else:
+        half = cap
+        ymin = max(0, src_yc - half); ymax = min(ny0, src_yc + half + 1)
+        xmin = max(0, src_xc - half); xmax = min(nx0, src_xc + half + 1)
+    # arcsec/pix for axis labels
+    try:
+        cdelt_arcsec_x = abs(cutout.wcs.celestial.wcs.cdelt[0]) * 3600.0
+        cdelt_arcsec_y = abs(cutout.wcs.celestial.wcs.cdelt[1]) * 3600.0
+    except (AttributeError, IndexError):
+        cdelt_arcsec_x = cdelt_arcsec_y = 1.0
+    def _arcsec_extent():
+        # Center on the source pixel; return (left, right, bottom, top)
+        return ((xmin - src_xc) * cdelt_arcsec_x,
+                (xmax - src_xc) * cdelt_arcsec_x,
+                (ymin - src_yc) * cdelt_arcsec_y,
+                (ymax - src_yc) * cdelt_arcsec_y)
+    extent = _arcsec_extent()
     # panel 1: peak-channel image
     on = np.abs(v - vlsr_kms) <= 10.0
     if on.any():
@@ -345,32 +461,45 @@ def plot_line_diagnostic(measure, line, sid, sdir, vlsr_kms, cutout):
         peak_ch = cube_arr.mean(axis=0)
     vmax = np.nanpercentile(peak_ch, 99) if np.isfinite(peak_ch).any() else 1
     vmin = np.nanpercentile(peak_ch, 1)
-    axs[0].imshow(peak_ch, origin="lower", cmap="viridis", vmin=vmin, vmax=vmax)
+    peak_crop = peak_ch[ymin:ymax, xmin:xmax]
+    axs[0].imshow(peak_crop, origin="lower", cmap="viridis", vmin=vmin, vmax=vmax,
+                   extent=extent)
     axs[0].set_title("peak channel")
-    axs[0].set_xticks([]); axs[0].set_yticks([])
-    # panel 2: mom0
+    axs[0].set_xlabel("$\\Delta$RA (\")"); axs[0].set_ylabel("$\\Delta$Dec (\")")
+    axs[0].tick_params(labelsize=8)
+    # panel 2: mom0 (tight crop)
     mvmax = max(abs(np.nanpercentile(mom0, 2)), abs(np.nanpercentile(mom0, 98)))
-    axs[1].imshow(mom0, origin="lower", cmap="RdBu_r", vmin=-mvmax, vmax=mvmax)
+    mom0_crop = mom0[ymin:ymax, xmin:xmax]
+    # PuOr (not red/blue): red-blue is reserved for velocity (mom1 panel)
+    axs[1].imshow(mom0_crop, origin="lower", cmap="PuOr_r", vmin=-mvmax, vmax=mvmax,
+                   extent=extent)
     axs[1].set_title(f"mom0 (±{on_kms:.0f} km/s)\nσ={m['sigma_mom0']:.2g}")
-    axs[1].set_xticks([]); axs[1].set_yticks([])
-    # panel 3: masked mom1
+    axs[1].set_xlabel("$\\Delta$RA (\")")
+    axs[1].tick_params(labelsize=8)
+    # panel 3: masked mom1 + dashed PV slit overlay (tight crop, arcsec axes)
+    slit_pa = _max_grad_pa_pix(mom1, src_yc, src_xc) if np.isfinite(mom1).any() else 0.0
     if np.isfinite(mom1).any():
-        v1, v2 = np.nanpercentile(mom1, [5, 95])
-        axs[2].imshow(mom1, origin="lower", cmap="RdBu_r", vmin=v1, vmax=v2)
-        axs[2].set_title("mom1 (mask mom0>5σ)")
+        mom1_crop = mom1[ymin:ymax, xmin:xmax]
+        v1, v2 = np.nanpercentile(mom1_crop[np.isfinite(mom1_crop)], [5, 95]) \
+                  if np.isfinite(mom1_crop).any() else (-10, 10)
+        axs[2].imshow(mom1_crop, origin="lower", cmap="RdBu_r", vmin=v1, vmax=v2,
+                       extent=extent)
+        axs[2].set_title(f"mom1 (mask mom0>5σ) | PV PA={slit_pa:+.0f}°")
+        # Dashed slit line in arcsec coords through source center (0,0).
+        half_len_arcsec = max(abs(extent[0]), abs(extent[1]),
+                                abs(extent[2]), abs(extent[3])) * 0.9
+        pa_rad = np.radians(slit_pa)
+        dx_a = np.sin(pa_rad); dy_a = np.cos(pa_rad)
+        axs[2].plot([-half_len_arcsec * dx_a, half_len_arcsec * dx_a],
+                     [-half_len_arcsec * dy_a, half_len_arcsec * dy_a],
+                     "k--", lw=0.8, alpha=0.85)
     else:
         axs[2].text(0.5, 0.5, "no mom1\n(no 5σ pixels)", ha="center", va="center",
                      transform=axs[2].transAxes)
         axs[2].set_title("mom1")
-    axs[2].set_xticks([]); axs[2].set_yticks([])
-    # apply 3x zoom to image panels by setting xlim/ylim around the cutout center
-    ny, nx = mom0.shape
-    cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
-    hx, hy = nx / (2.0 * ZOOM), ny / (2.0 * ZOOM)
-    for _ax in (axs[0], axs[1], axs[2]):
-        _ax.set_xlim(cx - hx, cx + hx)
-        _ax.set_ylim(cy - hy, cy + hy)
-    # panel 4: spectrum
+    axs[2].set_xlabel("$\\Delta$RA (\")")
+    axs[2].tick_params(labelsize=8)
+    # panel 4: spectrum + contaminant labels at observed freq → v conversion
     axs[3].plot(v, spec, "k-", drawstyle="steps-mid", lw=1)
     axs[3].axhline(0, color="grey", lw=0.5)
     axs[3].axhline(sigma, color="red", lw=0.5, ls=":")
@@ -382,8 +511,128 @@ def plot_line_diagnostic(measure, line, sid, sdir, vlsr_kms, cutout):
     axs[3].set_xlabel("v (km/s)")
     axs[3].set_ylabel("intensity")
     axs[3].set_title(f"spec @1-beam\nSNR={m['snr']:.1f}")
-    # panel 5: text summary
-    axs[4].axis("off")
+    # Overlay contaminant labels: convert each lineid_style rest-line to a
+    # velocity-axis position based on THIS line's rest frequency, so that
+    # neighboring transitions (NaCl/H2O/ISM/CH3OCHO/CH3OH/RRL) appear at their
+    # apparent Doppler velocity offset from the line being plotted.
+    try:
+        from analysis.lineid_style import (NACL_KCL, WATER, ISM, RRLS,
+                                            CH3OCHO_FREQS, CH3OH_FREQS,
+                                            COLOR_MAP)
+        _, ytop = axs[3].get_ylim()
+        ybot, _ = axs[3].get_ylim()
+        rest_GHz = float(line["rest_GHz"])
+        v_lo, v_hi = float(np.nanmin(v)), float(np.nanmax(v))
+        # Show every catalog line whose Doppler-shifted velocity (in this
+        # line's frame, accounting for source v_LSR) falls inside the v window
+        # of the panel. v_other = (1 - f_other/f_this) * c + v_LSR.
+        for (f_other, lab, cls) in (list(NACL_KCL) + list(WATER) + list(ISM)):
+            v_other = (1.0 - f_other / rest_GHz) * C_KMS + vlsr_kms
+            if not (v_lo <= v_other <= v_hi):
+                continue
+            col = COLOR_MAP.get(cls, "gray")
+            axs[3].axvline(v_other, color=col, ls=":", lw=0.5, alpha=0.7)
+            axs[3].text(v_other, ytop, lab, rotation=90, fontsize=6, color=col,
+                         ha="right", va="top", alpha=0.85)
+        for lab, f_other in RRLS.items():
+            v_other = (1.0 - f_other / rest_GHz) * C_KMS + vlsr_kms
+            if not (v_lo <= v_other <= v_hi):
+                continue
+            col = COLOR_MAP.get("rrl", "magenta")
+            axs[3].axvline(v_other, color=col, ls=":", lw=0.5, alpha=0.7)
+            axs[3].text(v_other, ytop, lab, rotation=90, fontsize=6, color=col,
+                         ha="right", va="top", alpha=0.85)
+        # CH3OCHO + CH3OH arrows
+        yspan = ytop - ybot
+        for freqs, arr_cls in ((CH3OCHO_FREQS, "ch3ocho"),
+                                (CH3OH_FREQS, "ch3oh")):
+            arr_col = COLOR_MAP[arr_cls]
+            for f_other in freqs:
+                v_other = (1.0 - f_other / rest_GHz) * C_KMS + vlsr_kms
+                if not (v_lo <= v_other <= v_hi):
+                    continue
+                axs[3].annotate("",
+                                 xy=(v_other, ytop - 0.18 * yspan),
+                                 xytext=(v_other, ytop - 0.02 * yspan),
+                                 arrowprops=dict(arrowstyle="-|>",
+                                                  color=arr_col, lw=0.6, alpha=0.7))
+    except (ImportError, AttributeError, KeyError):
+        pass
+    # panel 5: PV diagram across max-gradient slit, this line's velocity window
+    try:
+        from pvextractor import PathFromCenter, extract_pv_slice
+        from astropy.coordinates import SkyCoord
+        # Use the cutout's center coord as the slit center
+        wcs_c = cutout.wcs.celestial
+        ra_c, dec_c = wcs_c.pixel_to_world_values(src_xc, src_yc)
+        scoord = SkyCoord(ra_c * u.deg, dec_c * u.deg)
+        # length: ~4" in arcsec
+        cdelt_arcsec = abs(cutout.wcs.celestial.wcs.cdelt[0]) * 3600.0
+        slit_len = max(2.0, min(6.0, ny0 * cdelt_arcsec * 0.8))
+        path = PathFromCenter(center=scoord,
+                              length=slit_len * u.arcsec,
+                              angle=slit_pa * u.deg, sample=21)
+        # Restrict to ±3×on_kms velocity window for clarity
+        cube_v = cutout.with_spectral_unit(u.km / u.s, velocity_convention="radio")
+        vmin = (vlsr_kms - 3 * on_kms) * u.km / u.s
+        vmax = (vlsr_kms + 3 * on_kms) * u.km / u.s
+        sub_v = cube_v.spectral_slab(vmin, vmax)
+        pv = extract_pv_slice(sub_v, path)
+        pv_data = pv.data
+        # Crop offset to ~40 px window so square pixels stay visible
+        ny_pv, nx_pv = pv_data.shape
+        cx_pv = nx_pv // 2
+        crop_h = min(20, cx_pv)
+        pv_c = pv_data[:, max(0, cx_pv - crop_h):min(nx_pv, cx_pv + crop_h)]
+        pv_sig = float(mad_std(pv_c, ignore_nan=True))
+        pv_med = float(np.nanmedian(pv_c))
+        # shared PV style: white->black over -3..+3 sigma, black->orange above
+        import matplotlib.colors as _mcolors
+        _pvmin = pv_med - 3 * pv_sig
+        _pvmax = max(float(np.nanmax(pv_c)), pv_med + 6 * pv_sig)
+        _fb = min(0.95, max(0.05, (pv_med + 3 * pv_sig - _pvmin) / (_pvmax - _pvmin)))
+        _cmap_hc = _mcolors.LinearSegmentedColormap.from_list(
+            "pv_hc", [(0.0, "white"), (_fb, "black"), (1.0, "orange")])
+        # physical axes: spatial offset (arcsec) x velocity (km/s), plus a
+        # secondary frequency axis (channels/pixels are anti-useful)
+        c_kms = 299792.458
+        lo_i = max(0, cx_pv - crop_h)
+        hi_i = min(nx_pv, cx_pv + crop_h)
+        cun = str(pv.header.get("CUNIT1", "deg")).lower()
+        off_scale = abs(float(pv.header.get("CDELT1", cdelt_arcsec / 3600.0)))
+        if cun.startswith("deg"):
+            off_scale *= 3600.0
+        elif cun.startswith("arcmin"):
+            off_scale *= 60.0
+        x0 = (lo_i - cx_pv) * off_scale
+        x1 = (hi_i - 1 - cx_pv) * off_scale
+        vrel = sub_v.spectral_axis.to(u.km / u.s).value - vlsr_kms
+        y0, y1 = float(vrel[0]), float(vrel[-1])
+        axs[4].imshow(pv_c, origin="lower", aspect="auto",
+                       cmap=_cmap_hc, vmin=_pvmin, vmax=_pvmax,
+                       extent=[x0, x1, y0, y1])
+        axs[4].axvline(0.0, color="0.4", linestyle="--",
+                        linewidth=0.8, alpha=0.8)
+        axs[4].set_title(f"PV (line slit)\nlen={slit_len:.1f}\"")
+        axs[4].set_xlabel("offset (\")")
+        axs[4].set_ylabel("v - v$_{lsr}$ (km/s)")
+        _rest = float(line["rest_GHz"])
+        _v2f = lambda vr: _rest * (1.0 - (vr + vlsr_kms) / c_kms)
+        _f2v = lambda f: (1.0 - f / _rest) * c_kms - vlsr_kms
+        _sec = axs[4].secondary_yaxis("right", functions=(_v2f, _f2v))
+        _sec.set_ylabel("sky freq (GHz)")
+    except (ImportError, ValueError, RuntimeError, OSError) as _pverr:
+        # Keep the PV panel visible (framed) even on failure so every
+        # diagnostic has a PV slot, per the requirement that all diagnostics
+        # (detection or not) include a PV panel.
+        axs[4].text(0.5, 0.5, f"PV unavailable:\n{_pverr}",
+                     ha="center", va="center",
+                     transform=axs[4].transAxes, fontsize=8)
+        axs[4].set_title("PV (line slit)")
+        axs[4].set_xlabel("offset (\")")
+        axs[4].set_ylabel("v - v$_{lsr}$ (km/s)")
+    # panel 6: text summary
+    axs[5].axis("off")
     info = (f"line: {line['name']}\n"
             f"rest: {line['rest_GHz']:.5f} GHz\n"
             f"Eu: {line['Eu_K']:.1f} K\n"
@@ -395,9 +644,15 @@ def plot_line_diagnostic(measure, line, sid, sdir, vlsr_kms, cutout):
             f"integ: {m['integ']:.3g}\n"
             f"extended: {m['extended']}\n"
             f"vlsr (ref): {vlsr_kms:.1f}\n")
-    axs[4].text(0.05, 0.95, info, transform=axs[4].transAxes, va="top",
+    axs[5].text(0.02, 0.98, info, transform=axs[5].transAxes, va="top",
                 family="monospace", fontsize=9)
-    fig.suptitle(f"src {sid} | {line['name']}", fontsize=11)
+    # Reference position in suptitle (cutout center sky coord)
+    try:
+        ref_ra, ref_dec = cutout.wcs.celestial.pixel_to_world_values(src_xc, src_yc)
+        coord_str = f"(α={float(ref_ra):.5f}°, δ={float(ref_dec):+.5f}°)"
+    except (AttributeError, ValueError):
+        coord_str = ""
+    fig.suptitle(f"src {sid} | {line['name']}  {coord_str}", fontsize=11)
     fig.tight_layout()
     fig.savefig(sdir / f"{line['name']}_diagnostic.png", dpi=110, bbox_inches="tight")
     plt.close(fig)
@@ -733,7 +988,7 @@ def process_source(src, cubes, lines, outroot, vlsr_kms, distance_kpc, on_kms_de
         np.savez(sdir / f"{line['name']}.spec.npz", vaxis=m["vaxis"], spec=m["spec"], sigma=m["sigma"])
         # Always make mom0+mom1 FITS + diagnostic PNG
         m1, m0, sig_m0 = make_mom1(cutout, vlsr_kms, mom0_thresh_sigma=3.0,
-                                     on_kms=70.0 if line["group"]=="RRL" else 15.0)
+                                     on_kms=70.0 if line["group"] in ("RRL", "CRRL") else 15.0)
         hdr_m = cutout.wcs.celestial.to_header()
         hdr_m["BUNIT"] = "km/s"
         fits.PrimaryHDU(m1, hdr_m).writeto(sdir / f"{label}_{line['name']}_mom1.fits", overwrite=True)
@@ -766,6 +1021,15 @@ def main():
     ap.add_argument("--on-kms", type=float, default=10.0,
                     help="non-RRL line integration half-window (km/s); "
                          "RRLs always use 60 km/s")
+    ap.add_argument("--sources-region", default=None,
+                    help="DS9 .reg with explicit source apertures (icrs); "
+                         "circle/ellipse centers become sources, replacing "
+                         "the continuum auto-detect. Aperture is still "
+                         "the cube beam unless --use-region-aperture is set.")
+    ap.add_argument("--use-region-aperture", action="store_true",
+                    help="When --sources-region is set, use each region's "
+                         "ellipse (semi-major axis) as the aperture radius "
+                         "instead of the cube beam.")
     ap.add_argument("--target-tokens", default="",
                     help="comma-separated extra filename substrings that "
                          "identify the right target (e.g. 'I09002-4732' for "
@@ -847,8 +1111,16 @@ def main():
     lines = build_line_list(fmin=fmin_all, fmax=fmax_all)
     print(f"Candidate lines: {len(lines)} (in 80-500 GHz, span {fmin_all:.1f}-{fmax_all:.1f})")
 
-    sources, cont_sigma, cont_hdr, cont_data, wcs_cont = find_continuum_sources(cont_path, args.peak_sigma)
-    print(f"  {len(sources)} sources >= {args.peak_sigma}σ", flush=True)
+    if args.sources_region:
+        sources_auto, cont_sigma, cont_hdr, cont_data, wcs_cont = find_continuum_sources(
+            cont_path, args.peak_sigma)
+        sources = _sources_from_region(args.sources_region, cont_data, cont_hdr,
+                                         cont_sigma, wcs_cont)
+        print(f"  {len(sources)} manual-region sources from "
+              f"{args.sources_region}", flush=True)
+    else:
+        sources, cont_sigma, cont_hdr, cont_data, wcs_cont = find_continuum_sources(cont_path, args.peak_sigma)
+        print(f"  {len(sources)} sources >= {args.peak_sigma}σ", flush=True)
     # Assign a target-prefixed handle + brightness rank to each source so
     # filenames are unique across proposals. Brightness rank is 1 for the
     # brightest peak_Jybeam, 2 for the next, etc.

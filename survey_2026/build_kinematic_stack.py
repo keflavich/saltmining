@@ -157,8 +157,9 @@ def overlay_lineids(ax, freq_GHz_data, flux_data, vsys: float = 0.0):
     ylim = ax.get_ylim()
     ymax = float(ylim[1])
     apply_labels(ax, fmin, fmax, ymax, vsys=vsys,
-                  species=("salt", "h2o", "ism", "rrl"),
-                  arrows=("ch3ocho", "ch3oh"), fontsize=10)
+                  species=("salt", "h2o", "ism", "rrl", "ch3cn"),
+                  arrows=("ch3ocho", "ch3oh"), fontsize=10,
+                  spec_freq=freq_GHz_data, spec_flux=flux_data)
 
 
 def main():
@@ -292,9 +293,9 @@ def main():
     for pi in range(n_pages):
         page = panels[pi * ROWS_PER_PAGE:(pi + 1) * ROWS_PER_PAGE]
         n = len(page)
-        # Per-panel height set to 4.0 in (was 2.5) so the line labels lineid_plot
-        # places above each axis don't run into the panel boundary.
-        fig, axes = plt.subplots(n, 1, figsize=(20, 4.0 * n + 1.5))
+        # 3.0 in per panel; the label headroom lives INSIDE each axis (ylim
+        # padding below), so panels butt nearly together (small hspace).
+        fig, axes = plt.subplots(n, 1, figsize=(20, 3.0 * n + 1.2))
         if n == 1:
             axes = [axes]
         for ax, p in zip(axes, page):
@@ -306,15 +307,38 @@ def main():
             finite = T[np.isfinite(T)]
             if finite.size < 5:
                 continue
-            ymin = float(np.nanpercentile(finite, 1))
-            # Extra headroom (50%) so the rotated lineid labels above the
-            # spectrum trace stay inside the axis.
-            ymax = float(np.nanpercentile(finite, 99)) * 1.5 + 1
-            if not (np.isfinite(ymin) and np.isfinite(ymax)) or ymax <= ymin:
+            # Show the FULL data range (no percentile clipping: strong
+            # emission peaks were being cut off), plus 35% headroom above
+            # for the rotated line labels.
+            lo = float(np.nanmin(finite))
+            hi = float(np.nanmax(finite))
+            span = hi - lo
+            if not np.isfinite(span) or span <= 0:
                 continue
+            ymin = lo - 0.04 * span
+            ymax = hi + 0.35 * span
             ax.set_ylim(ymin, ymax)
             overlay_lineids(ax, freq, T)
         axes[-1].set_xlabel("rest frequency (GHz, aligned)", fontsize=12)
+        # Same legend as the per-source spectrum panels (shared label scheme)
+        from matplotlib.lines import Line2D
+        legend_handles = [
+            Line2D([0], [0], color="red", lw=1, label="NaCl / KCl (salt)"),
+            Line2D([0], [0], color="cyan", lw=1, label=r"H$_2$O 232"),
+            Line2D([0], [0], color="magenta", lw=1,
+                   label=r"RRL (Hn$\alpha\beta\gamma$)"),
+            Line2D([0], [0], color="black", lw=1, label="other ISM lines"),
+            Line2D([0], [0], color="darkgreen", lw=1,
+                   label=r"CH$_3$CN K-ladder"),
+            Line2D([0], [0], marker=r"$\downarrow$", color="red",
+                   markersize=14, lw=0,
+                   label=r"CH$_3$OCHO transition (XCLASS)"),
+            Line2D([0], [0], marker=r"$\downarrow$", color="blue",
+                   markersize=14, lw=0,
+                   label=r"CH$_3$OH transition (XCLASS)"),
+        ]
+        axes[0].legend(handles=legend_handles, loc="upper right",
+                        fontsize=10, ncol=3, framealpha=0.85)
         suffix = "" if n_pages == 1 else f"_p{pi+1}"
         fig.suptitle(
             f"{args.target} src{bid:02d}: kinematic stack "
@@ -324,8 +348,8 @@ def main():
             fontsize=13)
         # Explicit margins instead of tight_layout: avoids bbox_inches="tight"
         # vertically shrinking the panels.
-        fig.subplots_adjust(left=0.07, right=0.99, top=0.96, bottom=0.04,
-                              hspace=0.45)
+        fig.subplots_adjust(left=0.07, right=0.99, top=0.95, bottom=0.05,
+                              hspace=0.16)
         out_png = out_dir / f"aligned_by_{args.guide_line}{suffix}.png"
         fig.savefig(out_png, dpi=120)
         plt.close(fig)

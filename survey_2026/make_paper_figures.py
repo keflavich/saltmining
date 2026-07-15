@@ -83,6 +83,12 @@ def load_per_target_detections():
                 continue
             if m.empty or not {"source", "snr", "line"} <= set(m.columns):
                 continue
+            # convert brightness columns from cube-native (Jy/beam) to K so
+            # intensities/ULs are comparable across programs with different
+            # beams
+            from kelvin import convert_measurements_to_K
+            m = convert_measurements_to_K(m, ROOT / "uvdata", ad.name,
+                                           ad.parent.name)
             sub = m[m["source"] == bid]
             for sp, (_, pred) in SPECIES_GROUPS.items():
                 hits = sub[sub["line"].astype(str).apply(pred)]
@@ -213,7 +219,7 @@ def fig_detect_vs_lbol(df, species_list, robust=False, name_suffix=""):
     fig.tight_layout()
     out = FIG_DIR / f"detect_vs_lbol{name_suffix}.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -245,14 +251,25 @@ def fig_detect_corner(df, species_list):
     fig.tight_layout()
     out = FIG_DIR / "detect_corner_logistic.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
 
 def fig_intensity_corner(df, species_list):
+    """Lower-triangle corner of pairwise intensity / 3sigma-UL scatter.
+
+    Marker semantics (limits point toward the censored axis):
+      filled black circle : both species detected (measured intensities)
+      blue down-triangle  : y-axis species is a 3sigma upper limit
+      red left-triangle   : x-axis species is a 3sigma upper limit
+      open gray diamond   : both axes are upper limits
+    Axis labels/ticks only on the outermost (left column, bottom row) axes.
+    """
+    from matplotlib.lines import Line2D
     n = len(species_list)
-    fig, axes = plt.subplots(n, n, figsize=(2.4 * n, 2.4 * n))
+    fig, axes = plt.subplots(n, n, figsize=(2.4 * n, 2.4 * n),
+                              sharex="col", sharey="row")
     for i, sp_y in enumerate(species_list):
         for j, sp_x in enumerate(species_list):
             ax = axes[i, j]
@@ -270,17 +287,39 @@ def fig_intensity_corner(df, species_list):
                 y_val = abs(r[f"{sp_y}_intensity_or_UL"])
                 xd = bool(r[f"{sp_x}_det"])
                 yd = bool(r[f"{sp_y}_det"])
-                marker = "o" if xd and yd else ("^" if xd or yd else "v")
-                color = "k" if xd and yd else ("blue" if xd else "red")
-                ax.loglog(x_val, y_val, marker=marker, color=color, ms=4,
-                          markeredgewidth=0.4)
-            ax.set_xlabel(f"{sp_x}")
-            ax.set_ylabel(f"{sp_y}")
+                if xd and yd:
+                    marker, color, fill = "o", "k", "k"
+                elif xd and not yd:
+                    marker, color, fill = "v", "blue", "blue"
+                elif yd and not xd:
+                    marker, color, fill = "<", "red", "red"
+                else:
+                    marker, color, fill = "D", "gray", "none"
+                ax.loglog(x_val, y_val, marker=marker, color=color,
+                          markerfacecolor=fill, ms=4, markeredgewidth=0.6,
+                          linestyle="none")
             ax.tick_params(labelsize=6)
+            # outermost labels only; sharex/sharey suppress inner ticklabels
+            if i == n - 1:
+                ax.set_xlabel(f"{sp_x}")
+            if j == 0:
+                ax.set_ylabel(f"{sp_y}")
+    handles = [
+        Line2D([], [], marker="o", color="k", ls="none", ms=6,
+               label="both detected"),
+        Line2D([], [], marker="v", color="blue", ls="none", ms=6,
+               label="y-axis 3$\\sigma$ UL"),
+        Line2D([], [], marker="<", color="red", ls="none", ms=6,
+               label="x-axis 3$\\sigma$ UL"),
+        Line2D([], [], marker="D", color="gray", markerfacecolor="none",
+               ls="none", ms=6, label="both ULs"),
+    ]
+    fig.legend(handles=handles, loc="upper right", fontsize=11,
+                frameon=False, bbox_to_anchor=(0.95, 0.95))
     fig.tight_layout()
     out = FIG_DIR / "intensity_corner.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -312,7 +351,7 @@ def fig_cooccurrence(df, species_list):
     fig.tight_layout()
     out = FIG_DIR / "cooccurrence_heatmap.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -332,7 +371,7 @@ def fig_detect_vs_distance(df, species_list):
     fig.tight_layout()
     out = FIG_DIR / "detect_vs_distance.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -421,7 +460,7 @@ def fig_detect_vs_continuum(df, species_list):
     fig.tight_layout()
     out = FIG_DIR / "detect_vs_continuum.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -443,7 +482,7 @@ def fig_detect_vs_f5sigma(df, species_list):
     fig.tight_layout()
     out = FIG_DIR / "detect_vs_f5sigma.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -466,7 +505,7 @@ def fig_detect_vs_beam_au(df, species_list):
     fig.tight_layout()
     out = FIG_DIR / "detect_vs_beam_au.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -511,7 +550,7 @@ def fig_phi_correlation(df, species_list):
     fig.tight_layout()
     out = FIG_DIR / "phi_correlation.pdf"
     fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=150)
+    fig.savefig(out.with_suffix(".png"), bbox_inches="tight", dpi=300)
     plt.close(fig)
     print(f"  wrote {out}")
 
